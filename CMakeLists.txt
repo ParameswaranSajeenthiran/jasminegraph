@@ -203,10 +203,11 @@ target_compile_definitions(JasmineGraphLib PUBLIC ROOT_DIR="${CMAKE_CURRENT_SOUR
 
 if (CMAKE_ENABLE_DEBUG)
     message(STATUS "DEBUG enabled")
+    target_compile_options(JasmineGraphLib PRIVATE -g)
     target_compile_options(JasmineGraph PRIVATE -g)
 endif ()
 
-SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
+SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
 
 #TODO: Need to install the library separately
 target_link_libraries(JasmineGraphLib PRIVATE sqlite3)

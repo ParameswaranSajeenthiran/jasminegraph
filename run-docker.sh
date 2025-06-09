@@ -11,6 +11,7 @@ ENABLE_NMON=${ENABLE_NMON}
 DEBUG=${DEBUG}
 PROFILE=${PROFILE}
 
+
 # Set default value for PROFILE if not provided
 if [ -z "$PROFILE" ]; then
     PROFILE="docker"
