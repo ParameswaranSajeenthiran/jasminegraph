@@ -64,6 +64,9 @@ int JasmineGraphInstance::start_running(string hostName, string masterHost, int 
 
     pthread_join(instanceCommunicatorThread, NULL);
     pthread_join(instanceFileTransferThread, NULL);
+    myThreads[0].join();
+
+    delete[] myThreads;
     return 0;
 }
 

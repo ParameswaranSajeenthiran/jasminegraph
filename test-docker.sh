@@ -100,7 +100,7 @@ wait_for_hadoop() {
     cat $HDFS_CONF_FILE
 
     # Define file paths
-    FILE_NAME="multiple_graph_edges.json"
+    FILE_NAME="multiple_graph_edges.txt"
     LOCAL_DIRECTORY="/var/tmp/data/"
     LOCAL_FILE_PATH="${LOCAL_DIRECTORY}${FILE_NAME}"
 
