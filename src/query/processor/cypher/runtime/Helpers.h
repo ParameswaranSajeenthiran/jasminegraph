@@ -60,7 +60,10 @@ class ExpandAllHelper {
  public:
     static string generateSubQueryPlan(string query);
     static string generateSubQuery(string startVar, string destVar, string relVar, bool isDirected,
-                                   string id, string relType = "");
+                                   bool isRightDirected, string id, string relType = "");
+    static  string generateVarLengthSubQuery(std::string startVar, std::string destVar, std::string relVar, int minHops,
+                                     int maxHops, bool isDirected, bool isRightDirected, std::string id,
+                                     std::string relType);
 };
 
 class AverageAggregationHelper {

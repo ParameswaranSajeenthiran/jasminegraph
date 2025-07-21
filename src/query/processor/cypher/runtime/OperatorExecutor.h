@@ -29,6 +29,7 @@ class OperatorExecutor {
     void ProduceResult(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
     void Filter(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
     void ExpandAll(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
+    void VarLengthExpandAll(SharedBuffer& buffer, std::string jsonPlan, GraphConfig gc);
     void UndirectedRelationshipTypeScan(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
     void UndirectedAllRelationshipScan(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
     void DirectedRelationshipTypeScan(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);

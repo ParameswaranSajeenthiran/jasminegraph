@@ -300,6 +300,9 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
         string var_0 = var != "" ? var : "var_0";
         return new NodeScanByLabel(ast->elements[0]->elements[0]->value, var_0);
     } else if (ast->nodeType == Const::RANGE) {
+
+
+
         // TODO(thamindumk): Implement RANGE
     } else if (ast->nodeType == Const::PROPERTY) {
         // TODO(thamindumk): Implement PROPERTY
@@ -418,6 +421,8 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
     } else if (ast->nodeType == Const::EXISTS) {
         // TODO(thamindumk): Implement EXISTS
     } else if (ast->nodeType == Const::EXPLICIT_PROCEDURE) {
+
+
         // TODO(thamindumk): Implement EXPLICIT_PROCEDURE
     } else if (ast->nodeType == Const::IMPLICIT_PROCEDURE) {
         // TODO(thamindumk): Implement IMPLICIT_PROCEDURE
@@ -537,6 +542,11 @@ pair<vector<bool>, vector<ASTNode *>> QueryPlanner::getRelationshipDetails(ASTNo
                 availability[2] = true;
                 nodes[2] = e;
             }
+            else if (e->nodeType == Const :: RANGE)
+            {
+                availability[2] = true;
+                nodes[2] = e;
+            }
         } else {
             nodes.push_back(nullptr);
         }
@@ -623,7 +633,23 @@ Operator* QueryPlanner::pathPatternHandler(ASTNode *pattern, Operator* inputOper
                 if (patternElements[right]->elements[0]->elements[0]->nodeType == Const::UNIDIRECTION_ARROW) {
                     inputOperator = new ExpandAll(inputOperator, newStartVar, newDestvar,
                                                   newRelVar, newRelType);
-                } else {
+                }else if (patternElements[right]->elements.size() > 0 &&
+                patternElements[right]->elements[0]->elements.size() > 1 &&
+                patternElements[right]->elements[0]->elements[1]->elements.size() > 2 &&
+                patternElements[right]->elements[0]->elements[1]->elements[2]->nodeType == Const::RANGE)
+                {
+                    auto direction = patternElements[right]->elements[0]->elements[0]->nodeType == Const::LEFT_ARRROW ? "left" : "right";
+                    auto minHops = patternElements[right]->elements[0]->elements[1]->elements[2]->elements[0]->value;
+                    auto maxHops = patternElements[right]->elements[0]->elements[1]->elements[2]->elements[1]->value;
+
+                    inputOperator = new VarLengthExpandAll(inputOperator,
+                                                            newStartVar,
+                                                            newDestvar, newRelVar ,newRelType,
+                                                            direction,
+                                                            minHops,
+                                                           maxHops);
+                }
+                else {
                     auto direction = patternElements[right]->elements[0]->elements[0]->nodeType == Const::LEFT_ARRROW ?
                             "left" : "right";
                     inputOperator = new ExpandAll(inputOperator, newStartVar, newDestvar,
@@ -967,7 +993,45 @@ Operator* QueryPlanner::pathPatternHandler(ASTNode *pattern, Operator* inputOper
             inputOperator = new UndirectedRelationshipTypeScan(analyzedDetails.second[1]->elements[0]->value,
                                                                    relVar, startVar, destVar);
 
-        } else {
+        }
+        else if (e->elements.size() > 0 &&
+                e->elements[0]->elements.size() > 1 &&
+                e->elements[0]->elements[1]->elements.size() > 2 &&
+                e->elements[0]->elements[1]->elements[2]->nodeType == Const::RANGE){
+
+
+            auto direction = e->elements[0]->elements[0]->nodeType == Const::LEFT_ARRROW ? "left" : "right";
+            auto minHops = e->elements[0]->elements[1]->elements[2]->elements[0]->value;
+            auto maxHops = e->elements[0]->elements[1]->elements[2]->elements[1]->value;
+
+
+            if (isNodeLabelExist)
+            {
+                inputOperator = new NodeScanByLabel( analyzedSource.first[1]? analyzedSource.second[1]->elements[0]->value:"node_label",
+                    startVar);
+                inputOperator = new VarLengthExpandAll(inputOperator,
+                                                             startVar,
+                                                             destVar, relVar ,analyzedDetails.second[1]->elements[0]->value,
+                                                             direction,
+                                                             analyzedDetails.second[2]->elements[0]->value,
+                                                            analyzedDetails.second[2]->elements[1]->value);
+            }
+            else
+
+            {
+                inputOperator = new AllNodeScan( startVar);
+                inputOperator = new VarLengthExpandAll(inputOperator,
+                                                             startVar,
+                                                             destVar, relVar ,analyzedDetails.second[1]->elements[0]->value,
+                                                             direction,
+                                                             minHops, maxHops);
+            }
+
+
+        }
+
+
+        else {
             auto direction = e->elements[0]->elements[0]->nodeType == Const::LEFT_ARRROW ? "left" : "right";
             inputOperator = new DirectedRelationshipTypeScan(direction,
                                                                  analyzedDetails.second[1]->elements[0]->value,
