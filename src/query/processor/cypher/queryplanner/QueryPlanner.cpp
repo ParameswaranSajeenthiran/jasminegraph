@@ -542,11 +542,11 @@ pair<vector<bool>, vector<ASTNode *>> QueryPlanner::getRelationshipDetails(ASTNo
                 availability[2] = true;
                 nodes[2] = e;
             }
-            else if (e->nodeType == Const :: RANGE)
-            {
-                availability[2] = true;
-                nodes[2] = e;
-            }
+            // else if (e->nodeType == Const :: RANGE)
+            // {
+            //     availability[2] = true;
+            //     nodes[2] = e;
+            // }
         } else {
             nodes.push_back(nullptr);
         }
@@ -1013,8 +1013,8 @@ Operator* QueryPlanner::pathPatternHandler(ASTNode *pattern, Operator* inputOper
                                                              startVar,
                                                              destVar, relVar ,analyzedDetails.second[1]->elements[0]->value,
                                                              direction,
-                                                             analyzedDetails.second[2]->elements[0]->value,
-                                                            analyzedDetails.second[2]->elements[1]->value);
+                                                             minHops,
+                                                             maxHops);
             }
             else
 

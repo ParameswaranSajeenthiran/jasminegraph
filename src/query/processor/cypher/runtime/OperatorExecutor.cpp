@@ -1192,14 +1192,22 @@ void OperatorExecutor::VarLengthExpandAll(SharedBuffer &buffer, std::string json
 
                 if (depth >= minHops && depth <= maxHops) {
                     execution_logger.debug("VarLengthExpandAll: Adding path result of length " + std::to_string(depth) + ": " + currentPath.dump());
-                    currentPath[relVariable]=currentPath;
+                    json currentPathCopy = currentPath;
+                    currentPathCopy["depth"] = depth;
+                    currentPathCopy[destVariable]= currentPath["pathNodes"].back();
+
+
+                    currentPathCopy[relVariable]=currentPathCopy;
+
                     // log currentPath
 
                     // currentPath[destVariable]= currentPath["pathNodes"].back();
-                    currentPath["b"] = currentPath["pathNodes"].back();
+                    // currentPath["b"] = currentPath["pathNodes"].back();
                     // execution_logger.debug(currentPath);
                     // execution_logger.debug(destVariable);
-                     buffer.add(currentPath.dump());
+
+                     buffer.add(currentPathCopy.dump());
+                    currentPathCopy.clear();
                 }
                 if (depth == maxHops) {
                     execution_logger.debug("VarLengthExpandAll: Reached maxHops, skipping further expansion");

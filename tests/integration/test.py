@@ -465,6 +465,7 @@ def test(host, port):
         send_and_expect_response(sock, 'cypher', b'',
                                  b'done', exit_on_failure=True)
 
+
         print()
         logging.info('[Cypher] Testing Node Scan By Label')
         send_and_expect_response(sock, 'cypher', CYPHER, b'Graph ID:', exit_on_failure=True)
@@ -476,6 +477,36 @@ def test(host, port):
                                  exit_on_failure=True)
         send_and_expect_response(sock, 'cypher', b'',
                                  b'done', exit_on_failure=True)
+
+        logging.info('[Cypher] Testing FRIENDS paths')
+        send_and_expect_response(sock, 'cypher', b'CYPHER', b'Graph ID:', exit_on_failure=True)
+        send_and_expect_response(sock, 'cypher', b'2', b'Input query :', exit_on_failure=True)
+
+        send_and_expect_response(
+            sock, 'cypher',
+            b"MATCH (a)-[rel:FRIENDS*1..5]->(b) where a.id='6' RETURN a, b, rel",
+         b'{"a":{"category":"Park","id":"6","label":"Location","name":"Central Park","partitionID":"0"},"b":{"id":"0","label":"Person","name":"Alice","occupation":"Teacher","partitionID":"0"}',
+                exit_on_failure=True)
+
+        send_and_expect_response(sock, 'cypher', b'',
+            b'{"a":{"category":"Park","id":"6","label":"Location","name":"Central Park","partitionID":"0"},"b":{"category":"Airport","id":"18","label":"Location","name":"Skyport Airport","partitionID":"0"}',
+            exit_on_failure=True)
+
+        send_and_expect_response(sock, 'cypher', b'',
+    b'{"a":{"category":"Park","id":"6","label":"Location","name":"Central Park","partitionID":"0"},"b":{"category":"Bank","id":"7","label":"Location","name":"Town Bank","partitionID":"1"}',
+                     exit_on_failure=True)
+
+        send_and_expect_response(sock, 'cypher', b'',
+                     b'{"a":{"category":"Park","id":"6","label":"Location","name":"Central Park","partitionID":"0"},"b":{"category":"Coworking Space","id":"19","label":"Location","name":"Innovation Hub","partitionID":"1"}',
+                     exit_on_failure=True)
+
+        send_and_expect_response(sock, 'cypher', b'',
+                     b'{"a":{"category":"Park","id":"6","label":"Location","name":"Central Park","partitionID":"0"},"b":{"category":"Studio","id":"15","label":"Location","name":"Art Studio","partitionID":"1"}',
+                     exit_on_failure=True)
+
+        send_and_expect_response(sock, 'cypher', b'', b'done', exit_on_failure=True)
+
+
 
 
         print()
