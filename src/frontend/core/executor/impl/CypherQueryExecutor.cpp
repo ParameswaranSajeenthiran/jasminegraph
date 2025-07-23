@@ -93,7 +93,7 @@ void CypherQueryExecutor::execute() {
 
     ASTBuilder astBuilder;
     auto* ast = any_cast<ASTNode*>(astBuilder.visitOC_Cypher(parser.oC_Cypher()));
-    ast->print();
+    cypher_logger.debug(ast->print());
 
     SemanticAnalyzer semanticAnalyzer;
     string queryPlan;

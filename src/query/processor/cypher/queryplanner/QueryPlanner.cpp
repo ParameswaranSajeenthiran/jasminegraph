@@ -32,13 +32,14 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
     } else if (ast->nodeType == Const::MULTI_PART_QUERY) {
         int i = 0;
         currentOperator = createExecutionPlan(ast->elements[i++], currentOperator);
-        while (i < ast->elements.size()) {
+        while (i < (ast->elements.size())) {
             Apply* apply = new Apply(currentOperator);
-            if (i != ast->elements.size() - 1) {
-                apply->addOperator(createExecutionPlan(ast->elements[i++]));
-            } else {
+            if (i < ast->elements.size() - 1) {
                 apply->addOperator(createExecutionPlan(ast->elements[i++]));
                 currentOperator = apply;
+            } else {
+                apply->addOperator(createExecutionPlan(ast->elements[i++]));
+
             }
         }
     } else if (ast->nodeType == Const::MATCH) {
@@ -100,8 +101,63 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
         // TODO(thamindumk): Implement YIELD_ITEMS
     } else if (ast->nodeType == Const::YIELD) {
         // TODO(thamindumk): Implement YIELD
-    } else if (ast->nodeType == Const::WITH) {
+    }else if (ast->nodeType == Const::WITH) {
         currentOperator = createExecutionPlan(ast->elements[0], currentOperator);
+    // WITH behaves like a RETURN but continues the pipeline
+    // Operator* temp_opt = currentOperator;
+    //
+    // // 1. Handle WHERE clause inside WITH
+    // auto whereNodes = getSubTreeListByNodeType(ast, Const::WHERE);
+    // if (!whereNodes.empty()) {
+    //     // Add filter before projection/aggregation
+    //     vector<pair<string, ASTNode*>> filters;
+    //     for (auto* w : whereNodes) {
+    //         filters.emplace_back("null", w);  // No variable name restriction
+    //     }
+    //     temp_opt = new Filter(temp_opt, filters);
+    // }
+    //
+    // // 2. Check for non-arithmetic projections (properties)
+    // vector<ASTNode*> nonArith = getSubTreeListByNodeType(ast, Const::NON_ARITHMETIC_OPERATOR);
+    // vector<ASTNode*> property;
+    // if (!nonArith.empty()) {
+    //     for (auto* node : nonArith) {
+    //         if (isAvailable(Const::PROPERTY_LOOKUP, node)) {
+    //             property.push_back(node);
+    //         }
+    //     }
+    //     if (!property.empty()) {
+    //         temp_opt = new CacheProperty(temp_opt, property);
+    //     }
+    // }
+    //
+    // // 3. Handle aggregation functions inside WITH
+    // if (isAvailable(Const::FUNCTION_BODY, ast)) {
+    //     auto functions = getSubTreeListByNodeType(ast, Const::FUNCTION_BODY);
+    //     for (auto* func : functions) {
+    //         string name = func->elements[0]->elements[1]->value;
+    //         temp_opt = new AggregationFunction(temp_opt, func->elements[1]->elements[0], name);
+    //     }
+    // }
+    //
+    // // 4. Apply Projection
+    //     vector<ASTNode*> nonArith = getSubTreeListByNodeType(ast, Const::NON_ARITHMETIC_OPERATOR);
+    //
+    // temp_opt = new Projection(temp_opt, ast->elements);
+    //
+    // // 5. Handle ORDER BY, SKIP, LIMIT if present
+    // for (auto* node : ast->elements) {
+    //     if (node->nodeType == Const::ORDERED_BY) {
+    //         temp_opt = new OrderBy(temp_opt, node->elements[0]);
+    //     } else if (node->nodeType == Const::LIMIT) {
+    //         temp_opt = new Limit(temp_opt, node->elements[0]);
+    //     } else if (node->nodeType == Const::SKIP) {
+    //         temp_opt = new Skip(temp_opt, node->elements[0]);
+    //     }
+    // }
+    //
+    // // Continue pipeline from here
+    // currentOperator = new ProduceResults(temp_opt, vector<ASTNode*>(ast->elements));
     } else if (ast->nodeType == Const::RETURN) {
         for (auto * node : ast->elements) {
             if (node->nodeType == Const::DISTINCT) {
