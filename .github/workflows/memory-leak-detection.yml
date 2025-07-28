@@ -1,0 +1,36 @@
+name: memory-leak-detection.yml
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  docker-integration-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{!contains(github.event.pull_request.labels.*.name, 'Skip docker integration')}}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{github.head_ref}}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+
+      - name: Patch run-docker.sh for CI Valgrind
+        run: |
+          echo 'Patching run-docker.sh to use valgrind if DEBUG is unset...'
+          sed -i '/gdbserver.*JasmineGraph/!{
+            /JasmineGraph.*\\$PROFILE.*\\$MODE.*\\$MASTERIP.*\\$WORKERS.*\\$WORKERIP/ s|./JasmineGraph|valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph|
+            /JasmineGraph.*\\$PROFILE.*\\$MODE.*\\$HOST_NAME.*\\$MASTERIP.*\\$SERVER_PORT.*\\$SERVER_DATA_PORT/ s|./JasmineGraph|valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph|
+          }' run-docker.sh
+          chmod +x run-docker.sh
+
+      - name: Docker Build
+        run: docker build -t jasminegraph .
+
+      - name: Run Integration Tests
+        run: |
+          chmod +x test-docker.sh
+          ./test-docker.sh
