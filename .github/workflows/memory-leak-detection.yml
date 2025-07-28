@@ -18,14 +18,16 @@ jobs:
           ref: ${{github.head_ref}}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
-      - name: Patch run-docker.sh for CI Valgrind
+      - name: Print Latest run_master.log from /logs/
         run: |
-          echo 'Patching run-docker.sh to use valgrind if DEBUG is unset...'
-          sed -i '/gdbserver.*JasmineGraph/!{
-            /JasmineGraph.*\\$PROFILE.*\\$MODE.*\\$MASTERIP.*\\$WORKERS.*\\$WORKERIP/ s|./JasmineGraph|valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph|
-            /JasmineGraph.*\\$PROFILE.*\\$MODE.*\\$HOST_NAME.*\\$MASTERIP.*\\$SERVER_PORT.*\\$SERVER_DATA_PORT/ s|./JasmineGraph|valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph|
-          }' run-docker.sh
-          chmod +x run-docker.sh
+          LATEST_LOG_DIR=$(ls -td /logs/*/ | head -n 1)
+          if [ -f "${LATEST_LOG_DIR}run_master.log" ]; then
+            echo "== BEGIN LOG: ${LATEST_LOG_DIR}run_master.log =="
+            cat "${LATEST_LOG_DIR}run_master.log"
+            echo "== END LOG =="
+          else
+            echo "run_master.log not found in ${LATEST_LOG_DIR}"
+          fi
 
       - name: Docker Build
         run: docker build -t jasminegraph .
