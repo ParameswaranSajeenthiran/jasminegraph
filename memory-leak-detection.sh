@@ -1,14 +1,14 @@
 #!/bin/bash
 set -e
-rm -rf  ./performancedb/* ./metadb/* /var/tmp/jasminegraph-localstore/* /var/tmp/jasminegraph-localstore/* /var/tmp/jasminegraph-aggregate/* /var/tmp/hdfs/filechunks/* /tmp/jasminegraph/* ./env/databases/metadb ./env/databases/performancedb
+#rm -rf  /var/tmp/jasminegraph-localstore/* /var/tmp/jasminegraph-localstore/* /var/tmp/jasminegraph-aggregate/* /var/tmp/hdfs/filechunks/*  ./env/databases/metadb/* ./env/databases/performancedb/* /tmp/jasminegraph/*
 echo "=== Backing up original run-docker.sh ==="
 cp run-docker.sh run-docker.sh.bak
 
-echo "=== Patching run-docker.sh to use valgrind if DEBUG is unset ==="
-sed -i '/gdbserver.*JasmineGraph/!{
-  /JasmineGraph.*\$PROFILE.*\$MODE.*\$MASTERIP.*\$WORKERS.*\$WORKERIP/ s|./JasmineGraph|valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph|
-  /JasmineGraph.*\$PROFILE.*\$MODE.*\$HOST_NAME.*\$MASTERIP.*\$SERVER_PORT.*\$SERVER_DATA_PORT/ s|./JasmineGraph|valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph|
-}' run-docker.sh
+#echo "=== Patching run-docker.sh to use valgrind if DEBUG is unset ==="
+#sed -i '/gdbserver.*JasmineGraph/!{
+#  /JasmineGraph.*\$PROFILE.*\$MODE.*\$MASTERIP.*\$WORKERS.*\$WORKERIP/ s|./JasmineGraph|valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph|
+#  /JasmineGraph.*\$PROFILE.*\$MODE.*\$HOST_NAME.*\$MASTERIP.*\$SERVER_PORT.*\$SERVER_DATA_PORT/ s|./JasmineGraph|valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph|
+#}' run-docker.sh
 chmod +x run-docker.sh
 
 # Function to restore run-docker.sh on exit (even if failed)
