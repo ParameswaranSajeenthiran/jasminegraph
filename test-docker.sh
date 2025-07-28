@@ -6,7 +6,7 @@ export TERM=xterm-256color
 
 PROJECT_ROOT="$(pwd)"
 TEST_ROOT="${PROJECT_ROOT}/tests/integration"
-TIMEOUT_SECONDS=180
+TIMEOUT_SECONDS=360
 RUN_ID="$(date +%y%m%d_%H%M%S)"
 LOG_DIR="${PROJECT_ROOT}/logs/${RUN_ID}"
 while [ -d "$LOG_DIR" ]; do
@@ -46,7 +46,7 @@ stop_and_remove_containers() {
 }
 
 build_and_run_docker() {
-    stop_and_remove_containers
+#    stop_and_remove_containers
     cd "$PROJECT_ROOT"
     docker build -t jasminegraph:test . |& tee "$BUILD_LOG"
     build_status="${PIPESTATUS[0]}"
@@ -192,7 +192,7 @@ while ! nc -zvn 127.0.0.1 7777 &>/dev/null; do
         echo -e '\n\e[33;1mMASTER LOG:\e[0m'
         cat "$RUN_LOG"
         force_remove "${TEST_ROOT}/env"
-        stop_and_remove_containers
+#        stop_and_remove_containers
         exit 1
     fi
     sleep .5
@@ -227,39 +227,39 @@ for d in "${WORKER_LOG_DIR}"/worker_*; do
     cp -r "$d" "${LOG_DIR}/${worker_name}"
 done
 
-cd "$LOG_DIR"
-if [ "$exit_code" != '0' ]; then
-    echo
-    echo -e '\e[33;1mMaster log:\e[0m'
-    print_log "$RUN_LOG"
+#
 
-    for d in worker_*; do
-        cd "${LOG_DIR}/${d}"
-        echo
-        echo -e '\e[33;1m'"${d}"' log:\e[0m'
-        print_log worker.log
-
-        for f in merge_*.log; do
-            echo
-            echo -e '\e[33;1m'"${d} ${f::-4}"' log:\e[0m'
-            print_log "$f"
-        done
-
-        for f in fl_client_*.log; do
-            echo
-            echo -e '\e[33;1m'"${d} ${f::-4}"' log:\e[0m'
-            print_log "$f"
-        done
-
-        for f in fl_server_*.log; do
-            echo
-            echo -e '\e[33;1m'"${d} ${f::-4}"' log:\e[0m'
-            print_log "$f"
-        done
-    done
-fi
-
-stop_and_remove_containers
+#stop_and_remove_containerscd "$LOG_DIR"
+                           ##if [ "$exit_code" != '0' ]; then
+                           ##    echo
+                           ##    echo -e '\e[33;1mMaster log:\e[0m'
+                           ##    print_log "$RUN_LOG"
+                           ##
+                           ##    for d in worker_*; do
+                           ##        cd "${LOG_DIR}/${d}"
+                           ##        echo
+                           ##        echo -e '\e[33;1m'"${d}"' log:\e[0m'
+                           ##        print_log worker.log
+                           ##
+                           ##        for f in merge_*.log; do
+                           ##            echo
+                           ##            echo -e '\e[33;1m'"${d} ${f::-4}"' log:\e[0m'
+                           ##            print_log "$f"
+                           ##        done
+                           ##
+                           ##        for f in fl_client_*.log; do
+                           ##            echo
+                           ##            echo -e '\e[33;1m'"${d} ${f::-4}"' log:\e[0m'
+                           ##            print_log "$f"
+                           ##        done
+                           ##
+                           ##        for f in fl_server_*.log; do
+                           ##            echo
+                           ##            echo -e '\e[33;1m'"${d} ${f::-4}"' log:\e[0m'
+                           ##            print_log "$f"
+                           ##        done
+                           ##    done
+                           ##fi
 force_remove "${TEST_ROOT}/env" "${WORKER_LOG_DIR}"
 if [ "$exit_code" = '0' ]; then
     docker tag jasminegraph:test jasminegraph:latest

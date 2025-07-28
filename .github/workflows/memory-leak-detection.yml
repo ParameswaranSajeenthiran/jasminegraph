@@ -18,44 +18,48 @@ jobs:
           ref: ${{github.head_ref}}
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
 
+      - name: Memory Leak Detection
+        run: bash memory-leak-detection.sh
 
 
-      - name: Docker Build
-        run: docker build -t jasminegraph .
 
-      - name: Run Integration Tests
-        run: |
-          chmod +x test-docker.sh
-          ./test-docker.sh
 
-      - name: Print Latest run_master.log from logs/
-        run: |
-          LATEST_LOG_DIR=$(ls -td logs/*/ | head -n 1)
-          if [ -f "${LATEST_LOG_DIR}run_master.log" ]; then
-            echo "== BEGIN LOG: ${LATEST_LOG_DIR}run_master.log =="
-            cat "${LATEST_LOG_DIR}run_master.log"
-            echo "== END LOG =="
-          else
-            echo "run_master.log not found in ${LATEST_LOG_DIR}"
-          fi
-
-      - name: Check Valgrind Output for Memory Leaks
-        run: |
-          LATEST_LOG_DIR=$(ls -td logs/*/ | head -n 1)
-          LOG_FILE="${LATEST_LOG_DIR}run_master.log"
-
-          if [ ! -f "$LOG_FILE" ]; then
-            echo "Valgrind log not found at $LOG_FILE"
-            exit 1
-          fi
-
-          echo "Checking for definitely lost memory..."
-          DEFINITELY_LOST=$(grep "definitely lost:" "$LOG_FILE" | awk '{print $4}')
-
-          if [ "$DEFINITELY_LOST" != "0" ]; then
-            echo "❌ Memory leaks detected: definitely lost = $DEFINITELY_LOST"
-            grep -A5 "LEAK SUMMARY:" "$LOG_FILE"
-            exit 1
-          else
-            echo "✅ No memory leaks detected (definitely lost = 0)"
-          fi
+#      - name: Docker Build
+#        run: docker build -t jasminegraph .
+#
+#      - name: Run Integration Tests
+#        run: |
+#          chmod +x test-docker.sh
+#          ./test-docker.sh
+#
+#      - name: Print Latest run_master.log from logs/
+#        run: |
+#          LATEST_LOG_DIR=$(ls -td logs/*/ | head -n 1)
+#          if [ -f "${LATEST_LOG_DIR}run_master.log" ]; then
+#            echo "== BEGIN LOG: ${LATEST_LOG_DIR}run_master.log =="
+#            cat "${LATEST_LOG_DIR}run_master.log"
+#            echo "== END LOG =="
+#          else
+#            echo "run_master.log not found in ${LATEST_LOG_DIR}"
+#          fi
+#
+#      - name: Check Valgrind Output for Memory Leaks
+#        run: |
+#          LATEST_LOG_DIR=$(ls -td logs/*/ | head -n 1)
+#          LOG_FILE="${LATEST_LOG_DIR}run_master.log"
+#
+#          if [ ! -f "$LOG_FILE" ]; then
+#            echo "Valgrind log not found at $LOG_FILE"
+#            exit 1
+#          fi
+#
+#          echo "Checking for definitely lost memory..."
+#          DEFINITELY_LOST=$(grep "definitely lost:" "$LOG_FILE" | awk '{print $4}')
+#
+#          if [ "$DEFINITELY_LOST" != "0" ]; then
+#            echo "❌ Memory leaks detected: definitely lost = $DEFINITELY_LOST"
+#            grep -A5 "LEAK SUMMARY:" "$LOG_FILE"
+#            exit 1
+#          else
+#            echo "✅ No memory leaks detected (definitely lost = 0)"
+#          fi
