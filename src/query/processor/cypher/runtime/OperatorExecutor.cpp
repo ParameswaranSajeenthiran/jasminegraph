@@ -1345,49 +1345,65 @@ void OperatorExecutor::VarLengthExpandAll(SharedBuffer &buffer, std::string json
 
 
 void OperatorExecutor::AggregationFunction(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.debug("AggregationFunction: Parsing query plan");
     json query = json::parse(jsonPlan);
     SharedBuffer sharedBuffer(INTER_OPERATOR_BUFFER_SIZE);
     std::string nextOpt = query["NextOperator"];
     json next = json::parse(nextOpt);
     auto method = OperatorExecutor::methodMap[next["Operator"]];
+    execution_logger.debug("AggregationFunction: Launching next operator thread: " + next["Operator"].get<std::string>());
     // Launch the method in a new thread
     std::thread result(method, std::ref(*this), std::ref(sharedBuffer), query["NextOperator"], gc);
-    AverageAggregationHelper* averageAggregationHelper =
-            new AverageAggregationHelper(query["variable"], query["property"]);
+    execution_logger.debug("AggregationFunction: Creating AverageAggregationHelper for variable: " + query["variable"].get<std::string>() + ", property: " + query["property"].get<std::string>());
+    string functionName = query["FunctionName"].get<std::string>();
+    string variable = query["variable"].get<std::string>();
+    string property = query.contains("property") ? query["property"].get<std::string>() : "*";
+    AggregationHelper* averageAggregationHelper = AggregationHelperFactory::getAggregationMethod(functionName, variable, property );
     while (true) {
         string raw = sharedBuffer.get();
+        execution_logger.debug("AggregationFunction: Received from sharedBuffer: " + raw);
         if (raw == "-1") {
+            execution_logger.debug("AggregationFunction: Received end signal, adding final result to buffer");
             buffer.add(averageAggregationHelper->getFinalResult());
             buffer.add(raw);
             result.join();
+            execution_logger.debug("AggregationFunction: Thread joined, breaking loop");
             break;
         }
+        execution_logger.debug("AggregationFunction: Inserting data into AverageAggregationHelper: " + raw);
         averageAggregationHelper->insertData(raw);
     }
 }
 
 void OperatorExecutor::Projection(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.debug("Projection: Parsing query plan");
     json query = json::parse(jsonPlan);
     SharedBuffer sharedBuffer(INTER_OPERATOR_BUFFER_SIZE);
     std::string nextOpt = query["NextOperator"];
     json next = json::parse(nextOpt);
     auto method = OperatorExecutor::methodMap[next["Operator"]];
 
-    // Launch the method in a new thread
+    execution_logger.debug("Projection: Launching next operator thread: " + next["Operator"].get<std::string>());
     std::thread result(method, std::ref(*this), std::ref(sharedBuffer), query["NextOperator"], gc);
     if (!query.contains("project") || !query["project"].is_array()) {
+        execution_logger.debug("Projection: No project array found, forwarding all results");
         while (true) {
             string raw = sharedBuffer.get();
+            execution_logger.debug("Projection: Received raw = " + raw);
             buffer.add(raw);
             if (raw == "-1") {
+                execution_logger.debug("Projection: Received end signal, joining thread");
                 result.join();
                 break;
             }
         }
     } else {
+        execution_logger.debug("Projection: Project array found, processing projection");
         while (true) {
             string raw = sharedBuffer.get();
+            execution_logger.debug("Projection: Received raw = " + raw);
             if (raw == "-1") {
+                execution_logger.debug("Projection: Received end signal, joining thread");
                 buffer.add(raw);
                 result.join();
                 break;
@@ -1398,14 +1414,17 @@ void OperatorExecutor::Projection(SharedBuffer &buffer, std::string jsonPlan, Gr
                     if (operand.contains("variable") && key == operand["variable"]) {
                         string assign = operand["assign"];
                         string property = operand["property"];
+                        execution_logger.debug("Projection: Assigning property '" + property + "' of variable '" + key + "' to '" + assign + "'");
                         data[assign] = value[property];
                     } else if (operand.contains("functionName") && key == operand["functionName"]) {
                         string assign = operand["assign"];
+                        execution_logger.debug("Projection: Assigning function result '" + key + "' to '" + assign + "'");
                         data["variable"] = assign;
                         data[assign] = value;
                     }
                 }
             }
+            execution_logger.debug("Projection: Adding projected data to buffer: " + data.dump());
             buffer.add(data.dump());
         }
     }

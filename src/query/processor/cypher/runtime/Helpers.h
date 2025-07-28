@@ -66,17 +66,54 @@ class ExpandAllHelper {
                                      std::string relType);
 };
 
-class AverageAggregationHelper {
+
+class AggregationHelper {
+public:
+   virtual ~AggregationHelper() = default;
+   virtual string getFinalResult() = 0;
+   virtual void insertData(string data) = 0;
+};
+
+class CountAggregationHelper : public AggregationHelper
+{
+   public:
+      CountAggregationHelper(string variable): variable(variable){};
+      void insertData(string data) override;
+      string getFinalResult() override;
+
+   private:
+      string variable;
+      int count = 0;
+
+
+};
+
+
+class AverageAggregationHelper : public AggregationHelper {
  public:
     AverageAggregationHelper(string variable, string property): variable(variable), property(property){};
-    void insertData(string data);
-    string getFinalResult();
+    void insertData(string data) override;
+    string getFinalResult() override;
+
  private:
     string variable;
     string property;
     int numberOfData = 0;
     float  localAverage = 0.0f;
 };
+
+
+class AggregationHelperFactory {
+public:
+   static const string AVERAGE;
+   static const string DESC;
+   static const string ASC;
+   static const string COUNT;
+   static AggregationHelper* getAggregationMethod(string type , string variable, string property = "");
+};
+
+
+
 
 class CreateHelper {
  public:

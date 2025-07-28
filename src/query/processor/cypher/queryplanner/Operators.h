@@ -17,8 +17,15 @@ limitations under the License.
 
 #include <string>
 #include <iostream>
+#include <memory>
 #include <vector>
+#include <vector>
+#include <nlohmann/json_fwd.hpp>
+
 #include "../../../../util/logger/Logger.h"
+#include "../util/SharedBuffer.h"
+
+
 class ASTNode;
 using namespace std;
 // Base Operator Class
@@ -26,7 +33,9 @@ class Operator {
  public:
     virtual ~Operator() = default;
     virtual string execute() = 0;  // Pure virtual function to be implemented by derived classes
+
     static bool isAggregate;
+    bool isApply = false;
     static string aggregateType;
     static string aggregateKey;
 };
@@ -282,9 +291,13 @@ class Apply : public Operator {
  public:
     Apply(Operator* operator1);
     void addOperator(Operator* operator2);
+    Operator* getNextOperator(Operator* operator2);
+   void setParams (nlohmann::json row);
+
 
     // Execute method to perform the scan
     string execute() override;
+    void executeDistributed(const string& string, int stoi, int number_of_partitions,  std::vector<std::unique_ptr<SharedBuffer>>& rightBufferPool);
 
  private:
     Operator* operator1;
@@ -295,6 +308,7 @@ class AggregationFunction : public Operator {
  public:
     // Constructor
     AggregationFunction(Operator* input, ASTNode* ast, string functionName);
+    std::string extractFunctionName(const std::string& rawInput);
     string execute() override;
 
  private:

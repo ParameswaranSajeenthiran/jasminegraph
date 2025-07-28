@@ -37,4 +37,13 @@ class AverageAggregation : public Aggregation {
     void insert(string data) override;
 };
 
+class CountAggregation : public Aggregation {
+ public:
+    string data;
+    int count = 0;
+    CountAggregation()= default;
+    void getResult(int connFd) override;
+    void insert(string data) override;
+};
+
 #endif  // JASMINEGRAPH_AGGREGATION_H

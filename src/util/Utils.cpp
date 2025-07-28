@@ -83,11 +83,78 @@ std::string Utils::getFileContentAsString(std::string file) {
 std::string Utils::replaceAll(std::string content, const std::string &oldValue, const std::string &newValue) {
     size_t pos = 0;
     while ((pos = content.find(oldValue, pos)) != std::string::npos) {
+        bool isLeftBoundary = (pos == 0 || content[pos - 1] == ' '|| content[pos - 1] == '"' || content[pos - 1] == '{' || content[pos - 1] == '[');
+        bool isRightBoundary = (pos + oldValue.size() == content.size() || content[pos + oldValue.size()] == ' ' || content[pos + oldValue.size()] == '\\' || content[pos + oldValue.size()] == '\\' || content[pos + oldValue.size()] == '}' || content[pos + oldValue.size()] == ']');
+
+        // extract teh substring and log
+        util_logger.debug( "Replacing value in content: " + content.substr(pos-1, oldValue.length()+1) + " with " + newValue);
+
+
+        if (isLeftBoundary && isRightBoundary) {
         content.replace(pos, oldValue.length(), newValue);
+        }
         pos += newValue.length();
     }
     return content;
 }
+
+void  Utils::replaceValue(json &j, const std::string &oldVal, const std::string &newVal) {
+
+    if (j.is_object()) {
+        for (auto &el : j.items()) {
+            replaceValue(el.value(), oldVal, newVal);
+        }
+    } else if (j.is_array()) {
+        for (auto &el : j) {
+            replaceValue(el, oldVal, newVal);
+        }
+    } else if (j.is_string()) {
+        util_logger.debug( "Replacing value in JSON: " + j.get<std::string>());
+        if (j.get<std::string>() == oldVal) {
+            j = newVal;
+        }
+
+    }
+}
+
+bool Utils :: isValidJson(const std::string &str) {
+    try {
+        json::parse(str);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+void Utils:: unescapeNestedJson(json &j) {
+    if (j.is_object()) {
+        for (auto &item : j.items()) {
+            if (item.value().is_string()) {
+                std::string val = item.value().get<std::string>();
+                if (isValidJson(val)) {
+                    json nested = json::parse(val);
+                    unescapeNestedJson(nested);
+                    item.value() = nested;
+                }
+            } else {
+                unescapeNestedJson(item.value());
+            }
+        }
+    } else if (j.is_array()) {
+        for (auto &elem : j) {
+            if (elem.is_string()) {
+                std::string val = elem.get<std::string>();
+                if (isValidJson(val)) {
+                    json nested = json::parse(val);
+                    unescapeNestedJson(nested);
+                    elem = nested;
+                }
+            } else {
+                unescapeNestedJson(elem);
+            }
+        }
+    }
+}
+
 
 void Utils::writeFileContent(const std::string &filePath, const std::string &content) {
     std::ofstream out(filePath);
@@ -1538,6 +1605,8 @@ bool Utils::sendQueryPlanToWorker(std::string host, int port, std::string master
     }
     return true;
 }
+
+
 
 std::optional<std::tuple<std::string, int, int>> Utils::getWorker(string partitionId, std::string host, int port) {
     util_logger.info("Host:" + host + " Port:" + to_string(port));

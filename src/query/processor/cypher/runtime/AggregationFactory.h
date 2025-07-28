@@ -22,6 +22,7 @@ class AggregationFactory {
     static const string AVERAGE;
     static const string DESC;
     static const string ASC;
+    static const string COUNT;
     static Aggregation* getAggregationMethod(string type);
 };
 

@@ -31,14 +31,17 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
         }
     } else if (ast->nodeType == Const::MULTI_PART_QUERY) {
         int i = 0;
-        currentOperator = createExecutionPlan(ast->elements[i++], currentOperator);
-        while (i < (ast->elements.size())) {
+        currentOperator = createExecutionPlan(ast->elements[i], currentOperator);
+        while (i < (ast->elements.size()-1)) {
+            i++;
             Apply* apply = new Apply(currentOperator);
             if (i < ast->elements.size() - 1) {
-                apply->addOperator(createExecutionPlan(ast->elements[i++]));
-                currentOperator = apply;
+
+                apply->addOperator(createExecutionPlan(ast->elements[i]));
+
             } else {
-                apply->addOperator(createExecutionPlan(ast->elements[i++]));
+                apply->addOperator(createExecutionPlan(ast->elements[i]));
+                currentOperator = apply;
 
             }
         }
@@ -206,12 +209,21 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
         }
 
         if (isAvailable(Const::FUNCTION_BODY, ast)) {
+
             auto functions = getSubTreeListByNodeType(ast, Const::FUNCTION_BODY);
             for (auto func : functions) {
                 string name = func->elements[0]->elements[1]->value;
-                if (name == "avg" || name == "AVG") {
+                // if (name == "avg" || name == "AVG") {
+                if (temp_opt!= nullptr)
+                {
                     temp_opt = new AggregationFunction(temp_opt, func->elements[1]->elements[0], name);
+
+                }else
+                {
+                    temp_opt = new AggregationFunction(currentOperator, func->elements[1]->elements[0], name);
+
                 }
+                // }
             }
         }
 

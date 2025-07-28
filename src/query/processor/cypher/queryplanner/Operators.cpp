@@ -14,8 +14,14 @@ limitations under the License.
 #include "Operators.h"
 #include <nlohmann/json.hpp>
 #include <map>
+
+#include "QueryPlanner.h"
+#include "../../../../frontend/core/executor/impl/CypherQueryExecutor.h"
+#include "../../../../server/JasmineGraphServer.h"
 #include "../util/Const.h"
 #include "../astbuilder/ASTNode.h"
+#include "../runtime/AggregationFactory.h"
+#include "../util/SharedBuffer.h"
 using namespace std;
 Logger operatorLogger;
 using json = nlohmann::json;
@@ -80,6 +86,14 @@ string ProduceResults::execute() {
 
     for (auto* result : item) {
         if (result->nodeType == Const::AS) {
+            if (result->elements[0]->nodeType == Const :: FUNCTION_BODY)
+            {
+                auto nonArithmetic = result->elements[0]->elements[1]->elements[0];
+                string variable = nonArithmetic->elements[0]->value;
+                string property = nonArithmetic->elements[1]->elements[0]->value;
+                produceResult["variable"].push_back("variable");
+                produceResult["variable"].push_back("numberOfData");
+            }
             produceResult["variable"].push_back(result->elements[1]->value);
         } else if (result->nodeType == Const::NON_ARITHMETIC_OPERATOR) {
             produceResult["variable"].push_back(result->elements[0]->value + "." +
@@ -316,7 +330,7 @@ string Projection::execute() {
             operand["assign"] = ast->elements[1]->value;
         } else if (ast->nodeType == Const::VARIABLE) {
             continue;
-        } else if (ast->nodeType == Const::FUNCTION_BODY) {
+        } else if ( QueryPlanner::isAvailable(Const::FUNCTION_BODY, ast)) {
             auto nonArithmetic = ast->elements[1]->elements[0];
             string variable = nonArithmetic->elements[0]->value;
             string property = nonArithmetic->elements[1]->elements[0]->value;
@@ -563,9 +577,15 @@ void Apply::addOperator(Operator *operator2) {
     this->operator2 = operator2;
 }
 
+Operator* Apply:: getNextOperator(Operator *operator2) {
+    return this->operator2;
+}
+
 
 // Execute method
 string Apply::execute() {
+
+
     if (operator1 != nullptr) {
         operatorLogger.debug("left of Apply");
         operator1->execute();
@@ -576,11 +596,250 @@ string Apply::execute() {
     }
 
     operatorLogger.debug("Merged left and right of Apply");
-    return "";
+    json apply;
+    apply["Operator"] = "Apply";
+    if (operator1 != nullptr) {
+        apply["NextOperator"] = operator1->execute();
+    }
+    if (operator2 != nullptr) {
+        apply["NextOperator2"] = operator2->execute();
+    }
+    Operator::isApply = true;
+    apply["isApply"] = Operator::isApply;
+    return apply.dump();
+
 }
+
+
+void Apply::executeDistributed(const std::string& masterIP, int graphId, int numberOfPartitions,
+                               std::vector<std::unique_ptr<SharedBuffer>>& bufferPool) {
+    operatorLogger.debug("Starting executeDistributed for Apply operator");
+    const auto &workerList = JasmineGraphServer::getWorkers(numberOfPartitions);
+    operatorLogger.debug("Fetched worker list for numberOfPartitions=" + std::to_string(numberOfPartitions));
+
+    // ---- STEP 1: Execute LEFT child ----
+    std::vector<std::unique_ptr<SharedBuffer>> leftBufferPool;
+    leftBufferPool.reserve(numberOfPartitions);
+    operatorLogger.debug("Reserved leftBufferPool for " + std::to_string(numberOfPartitions) + " partitions");
+    for (size_t i = 0; i < numberOfPartitions; ++i) {
+        leftBufferPool.emplace_back(std::make_unique<SharedBuffer>(MASTER_BUFFER_SIZE));
+        operatorLogger.debug("Created SharedBuffer for leftBufferPool at index " + std::to_string(i));
+    }
+
+    std::string leftQueryPlan = operator1->execute();  // Left plan is a query string
+    operatorLogger.debug("Generated leftQueryPlan: " + leftQueryPlan);
+    std::vector<std::thread> leftThreads;
+    int count = 0;
+    for (auto worker : workerList) {
+        operatorLogger.debug("Spawning thread for CypherQueryExecutor::doCypherQuery for worker " + worker.hostname + ":" + std::to_string(worker.port));
+        leftThreads.emplace_back(
+            CypherQueryExecutor::doCypherQuery,
+            worker.hostname, worker.port,
+            masterIP, graphId, count,
+            leftQueryPlan, std::ref(*leftBufferPool[count]));
+        count++;
+    }
+
+    operatorLogger.debug("All left threads joined");
+
+    // ---- STEP 2: Process LEFT results & run RIGHT plan ----
+    int closeFlag = 0;
+    operatorLogger.debug("Processing leftBufferPool results");
+    while (true) {
+        if (closeFlag == numberOfPartitions) {
+            operatorLogger.debug("All partitions closed, breaking loop");
+            for (auto& t : leftThreads) {
+                if (t.joinable()) {
+                    operatorLogger.debug("Joining left thread");
+                    t.join();
+                }
+            }
+            break;
+        }
+
+
+
+        if (leftQueryPlan.find("AggregationFunction") != std::string::npos)
+        {
+            if (Operator::aggregateType == AggregationFactory::AVERAGE) {
+                Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::AVERAGE);
+                while (true) {
+                    if (closeFlag == numberOfPartitions) {
+                        break;
+                    }
+                    for (size_t i = 0; i < bufferPool.size(); ++i) {
+                        std::string data;
+                        if (bufferPool[i]->tryGet(data)) {
+                            if (data == "-1") {
+                                closeFlag++;
+                            } else {
+                                aggregation->insert(data);
+                            }
+                        }
+                    }
+                }
+                aggregation->getResult(connFd);
+            }else if (Operator::aggregateType == AggregationFactory::COUNT) {
+                Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::COUNT);
+                while (true) {
+                    if (closeFlag == numberOfPartitions) {
+                        break;
+                    }
+                    for (size_t i = 0; i < bufferPool.size(); ++i) {
+                        std::string data;
+                        if (bufferPool[i]->tryGet(data)) {
+                            if (data == "-1") {
+                                closeFlag++;
+                            } else {
+                                aggregation->insert(data);
+                            }
+                        }
+                    }
+                }
+                aggregation->getResult(connFd);
+            }
+
+        }
+
+
+        for (size_t i = 0; i < leftBufferPool.size(); ++i) {
+            std::string data;
+            if (leftBufferPool[i]->tryGet(data)) {
+                operatorLogger.debug("Received data from leftBufferPool[" + std::to_string(i) + "]: " + data);
+                if (data == "-1") {
+                    bufferPool[i]->add(data);
+                    closeFlag++;
+                    operatorLogger.debug("Received close flag from leftBufferPool[" + std::to_string(i) + "], closeFlag=" + std::to_string(closeFlag));
+                } else {
+                    // Build right query plan for this left row
+                    std::string rightPlan = operator2->execute();
+                    operatorLogger.debug("Generated rightPlan before replacement: " + rightPlan);
+
+                    try {
+                        auto parsed = json::parse(data);
+                        if (!parsed.is_object()) {
+                            operatorLogger.error("Parsed data is not a JSON object: " + data);
+                            continue;
+                        }
+                        for (const auto& [key, value] : parsed.items()) {
+
+                            rightPlan = Utils:: replaceAll(rightPlan, key, value);
+                            rightPlan = Utils:: replaceAll(rightPlan, "VARIABLE", "STRING");
+                            operatorLogger.debug("Replaced {" + key + "} with " + value.dump() + " in rightPlan");
+                            operatorLogger.debug("Replaced {" + key + "} with " + value.dump() + " in rightPlan");
+                        }
+                    } catch (const std::exception& e) {
+                        operatorLogger.error("JSON parse error: " + std::string(e.what()) + " for data: " + data);
+                        continue;
+                    }
+                    operatorLogger.debug("Final rightPlan: " + rightPlan);
+
+                    // ---- STEP 2A: If right is Apply, call recursively ----
+                    // if (operator2->isApply) {
+                    //     operatorLogger.debug("Right operator is Apply, calling recursively");
+                    //     Apply* nestedApply = dynamic_cast<Apply*>(operator2);
+                    //     if (!nestedApply) {
+                    //         operatorLogger.error("Expected Apply operator on right side, but dynamic_cast failed");
+                    //         throw std::runtime_error("Expected Apply operator on right side");
+                    //     }
+                    //     nestedApply->executeDistributed(masterIP, graphId, numberOfPartitions, std::ref(bufferPool));
+                    // }
+                    // ---- STEP 2B: Otherwise, send as a normal query ----
+                    // else {
+                        operatorLogger.debug("Right operator is not Apply, sending as normal query");
+                        std::vector<std::unique_ptr<SharedBuffer>> rightBufferPool;
+                        rightBufferPool.reserve(numberOfPartitions);
+                        operatorLogger.debug("Reserved leftBufferPool for " + std::to_string(numberOfPartitions) + " partitions");
+                        for (size_t i = 0; i < numberOfPartitions; ++i) {
+                            rightBufferPool.emplace_back(std::make_unique<SharedBuffer>(MASTER_BUFFER_SIZE));
+                            operatorLogger.debug("Created SharedBuffer for leftBufferPool at index " + std::to_string(i));
+                        }
+
+                        std::vector<std::thread> rightThreads;
+                        int count = 0;
+                        for (auto worker : workerList) {
+                            operatorLogger.debug("Spawning thread for CypherQueryExecutor::doCypherQuery for worker " + worker.hostname + ":" + std::to_string(worker.port));
+                            rightThreads.emplace_back(
+                                CypherQueryExecutor::doCypherQuery,
+                                worker.hostname, worker.port,
+                                masterIP, graphId, count,
+                                rightPlan, std::ref(*rightBufferPool[count]));
+                            count++;
+                        }
+
+                        // Stream results to client
+                        int closeFlag = 0;
+                       count = 0;
+                        int result_wr;
+                        while (true) {
+                            if (closeFlag == numberOfPartitions) {
+                                for (auto& t : rightThreads) {
+                                    if (t.joinable()) {
+                                        operatorLogger.debug("Joining right thread");
+                                        t.join();
+                                    }
+                                }
+                                break;
+                            }
+                            for (size_t i = 0; i < bufferPool.size(); ++i) {
+                                std::string data;
+                                if (rightBufferPool[i]->tryGet(data)) {
+                                    if (data == "-1") {
+                                        closeFlag++;
+
+                                    } else {
+                                        operatorLogger.debug("ProduceResult: Adding result to buffer: " + data);
+                                        bufferPool[i]->add(data);
+                                    }
+                                }
+                            }
+                        }
+
+
+
+
+                        operatorLogger.debug("All right threads joined for this left row");
+                    }
+                }
+            }
+        }
+    // }
+
+    operatorLogger.debug("Finished executeDistributed for Apply operator");
+}
+
 
 AggregationFunction::AggregationFunction(Operator *input, ASTNode *ast, std::string functionName):
     input(input), ast(ast), functionName(functionName) {}
+
+std::string AggregationFunction:: extractFunctionName(const std::string& rawInput) {
+    using json = nlohmann::json;
+
+    // Step 1: Parse outermost JSON
+    json outer = json::parse(rawInput);
+    // std::string current = outer["NextOperator"];
+
+
+    // Step 2: Unescape & parse until we find FunctionName
+    while (true) {
+
+        try {
+            Utils::unescapeNestedJson(outer);
+            if (outer.contains("FunctionName")) {
+                return outer["FunctionName"];
+            }
+            if (outer.contains("NextOperator")) {
+                outer = outer["NextOperator"];
+            } else {
+                break;
+            }
+        } catch (...) {
+            break;
+        }
+    }
+
+    return "FunctionName not found";
+}
 
 string AggregationFunction::execute() {
     json eagerFunction;
@@ -590,7 +849,11 @@ string AggregationFunction::execute() {
     eagerFunction["variable"] = ast->elements[0]->value;
     eagerFunction["property"] = ast->elements[1]->elements[0]->value;
     Operator::isAggregate = true;
-    Operator::aggregateType = "Average";
+    if ( functionName == "avg" || functionName == "AVG"){
+        Operator::aggregateType = AggregationFactory::AVERAGE;
+    } else if (functionName == "count" || functionName == "COUNT") {
+        Operator::aggregateType = AggregationFactory::COUNT;
+    };
     return eagerFunction.dump();
 }
 

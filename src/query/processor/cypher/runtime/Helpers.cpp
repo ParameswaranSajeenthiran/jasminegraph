@@ -420,6 +420,18 @@ string ExpandAllHelper::generateVarLengthSubQuery(std::string startVar, std::str
            " RETURN " + relVar + "," + destVar;
 }
 
+const string AggregationHelperFactory::AVERAGE = "avg";
+const string AggregationHelperFactory::COUNT = "count";
+
+AggregationHelper* AggregationHelperFactory::getAggregationMethod(std::string type, std:: string variable, std::string property) {
+    if (type == AVERAGE) {
+        return new AverageAggregationHelper( std::move(variable), std::move(property));
+    }else if (type == COUNT) {
+        return new CountAggregationHelper(std::move(variable));
+    }
+    return nullptr;
+}
+
 
 void AverageAggregationHelper::insertData(std::string data) {
     json rawObj = json::parse(data);
@@ -435,6 +447,27 @@ string AverageAggregationHelper::getFinalResult() {
     data["numberOfData"] = this->numberOfData;
     return data.dump();
 }
+
+
+void CountAggregationHelper::insertData(string data)
+{
+    json rawObj = json::parse(data);
+    if (rawObj.contains(this->variable)) {
+        this->count++;
+    } else {
+        throw std::runtime_error("Variable not found in data");
+    }
+}
+
+string CountAggregationHelper::getFinalResult()
+{
+    json data;
+    data["count"] = this->count;
+    data["variable"] = this->variable;
+    return data.dump();
+
+}
+
 
 CreateHelper::CreateHelper(vector<json> elements, std::string partitionAlgo, GraphConfig gc, string masterIP) :
     elements(elements), gc(gc), masterIP(masterIP) {
@@ -837,18 +870,24 @@ void CreateHelper::insertWithoutData(SharedBuffer &buffer) {
                 buffer.add(rawObj.dump());
             }
         } else if (insert["type"] == "Node") {
-            json rawObj;
+          json rawObj;
+            std::cout << "[DEBUG] Processing Node insert: " << insert.dump() << std::endl;
             if (insert.contains("properties") && insert["properties"].contains("id")) {
                 string sourceId = insert["properties"]["id"];
                 string destId = Const::DUMMY_ID;
+                std::cout << "[DEBUG] Adding edge for Node: sourceId=" << sourceId << ", destId=" << destId << std::endl;
                 partitionedEdge partitionedEdge = graphPartitioner->addEdge({sourceId, destId});
                 RelationBlock* newRelation;
                 NodeBlock* newNode = nullptr;
                 if (partitionedEdge[0].second == gc.partitionID) {
+                    std::cout << "[DEBUG] Partition matches gc.partitionID, adding node: " << sourceId << std::endl;
                     newNode = nodeManager.addNode(sourceId);
+                } else {
+                    std::cout << "[DEBUG] Partition does not match gc.partitionID, skipping node: " << sourceId << std::endl;
                 }
 
                 if (!newNode) {
+                    std::cout << "[DEBUG] newNode is nullptr, returning." << std::endl;
                     return;
                 }
 
@@ -856,20 +895,25 @@ void CreateHelper::insertWithoutData(SharedBuffer &buffer) {
                 char meta[MetaPropertyLink::MAX_VALUE_SIZE] = {0};
                 json sourceProps = insert["properties"];
                 for (auto it = sourceProps.begin(); it != sourceProps.end(); it++) {
+                    std::cout << "[DEBUG] Adding property to node: " << it.key() << " = " << it.value() << std::endl;
                     strcpy(value, it.value().get<std::string>().c_str());
                     newNode->addProperty(std::string(it.key()), &value[0]);
                 }
 
-                std::string sourcePid = to_string(partitionedEdge[0].second);;
+                std::string sourcePid = to_string(partitionedEdge[0].second);
+                std::cout << "[DEBUG] Adding meta property PARTITION_ID: " << sourcePid << std::endl;
                 strcpy(meta, sourcePid.c_str());
                 newNode->addMetaProperty(MetaPropertyLink::PARTITION_ID, &meta[0]);
 
                 if (insert.contains("variable")) {
                     string variable = insert["variable"];
+                    std::cout << "[DEBUG] Adding variable to rawObj: " << variable << std::endl;
                     rawObj[variable] = insert["properties"];
                 }
+                std::cout << "[DEBUG] Adding rawObj to buffer: " << rawObj.dump() << std::endl;
                 buffer.add(rawObj.dump());
             }
+            std::cout << "[DEBUG] Node insert processing complete." << std::endl;
             return;
         }
     }

@@ -45,3 +45,28 @@ void AverageAggregation::insert(std::string data) {
     workerData[variable] = average;
     this->data = workerData.dump();
 }
+
+void CountAggregation::getResult(int connFd) {
+    int result_wr = write(connFd, data.c_str(), data.length());
+    if (result_wr < 0) {
+        aggregateLogger.error("Error writing to socket");
+        return;
+    }
+    result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+    if (result_wr < 0) {
+        aggregateLogger.error("Error writing to socket");
+        return;
+    }
+}
+
+void CountAggregation::insert(std::string data) {
+    json workerData = json::parse(data);
+    string variable = workerData["variable"];
+    int localCount = workerData[variable].get<int>();
+    count += localCount;
+    workerData.erase("variable");
+    workerData.erase("numberOfData");
+    workerData.erase(variable);
+    workerData[variable] = count;
+    this->data = workerData.dump();
+}

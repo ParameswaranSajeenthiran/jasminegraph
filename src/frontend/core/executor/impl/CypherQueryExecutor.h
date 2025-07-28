@@ -24,8 +24,9 @@ class CypherQueryExecutor : public AbstractExecutor{
                                                int partitionId, std::string message, SharedBuffer &sharedBuffer);
     void execute() override;
     static int getUid();
+    void apply(const std::string& rightJSONPlan, std::vector<std::unique_ptr<SharedBuffer>>& bufferPool);
 
- private:
+private:
     SQLiteDBInterface *sqlite;
     PerformanceSQLiteDBInterface *perfDB;
 };

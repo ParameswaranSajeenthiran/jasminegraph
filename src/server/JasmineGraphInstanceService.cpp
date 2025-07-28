@@ -4409,6 +4409,9 @@ static void sub_query_start_command(int connFd, InstanceHandler &instanceHandler
     }
     instance_logger.debug("Sent CRLF string to mark the end");
 }
+
+
+
 static void hdfs_start_stream_command(int connFd, bool *loop_exit_p, bool isLocalStream,
                                       InstanceStreamHandler &instanceStreamHandler) {
     if (!Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::HDFS_STREAM_START_ACK)) {
