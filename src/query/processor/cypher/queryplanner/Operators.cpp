@@ -14,6 +14,7 @@ limitations under the License.
 #include "Operators.h"
 #include <nlohmann/json.hpp>
 #include <map>
+#include <boost/tuple/detail/tuple_basic.hpp>
 
 #include "QueryPlanner.h"
 #include "../../../../frontend/core/executor/impl/CypherQueryExecutor.h"
@@ -28,6 +29,7 @@ using json = nlohmann::json;
 
 bool Operator::isGroupBy = false;
 bool Operator::isAggregate = false;
+int Operator::limit = -1;
 std::string Operator::aggregateType = "";
 std::string Operator::aggregateKey = "";
 
@@ -88,12 +90,22 @@ string ProduceResults::execute() {
     for (auto* result : item) {
         if (result->nodeType == Const::AS) {
             if (result->elements[0]->nodeType == Const :: FUNCTION_BODY)
-            {
-                auto nonArithmetic = result->elements[0]->elements[1]->elements[0];
-                string variable = nonArithmetic->elements[0]->value;
-                string property = nonArithmetic->elements[1]->elements[0]->value;
-                produceResult["variable"].push_back("variable");
-                produceResult["variable"].push_back("numberOfData");
+            {                    auto nonArithmetic = result->elements[0]->elements[1]->elements[0];
+
+                if (nonArithmetic->elements.empty())
+                {
+                    string variable = nonArithmetic->value;
+                    string property ="*";
+                    produceResult["variable"].push_back("variable");
+                    produceResult["variable"].push_back("numberOfData");
+                }
+                else
+                {
+                    string variable = nonArithmetic->elements[0]->value;
+                    string property = nonArithmetic->elements[1]->elements[0]->value;
+                    produceResult["variable"].push_back("variable");
+                    produceResult["variable"].push_back("numberOfData");
+                }
                 if (Operator::isGroupBy)
                 {
                     produceResult["variable"].push_back("groupByKey");
@@ -107,12 +119,23 @@ string ProduceResults::execute() {
             produceResult["variable"].push_back(result->value);
         } else if (result->nodeType == Const::FUNCTION_BODY) {
             auto nonArithmetic = result->elements[1]->elements[0];
-            string variable = nonArithmetic->elements[0]->value;
-            string property = nonArithmetic->elements[1]->elements[0]->value;
-            produceResult["variable"].push_back(result->elements[0]->elements[1]->value
-                    + "(" + variable + "." + property + ")");
-            produceResult["variable"].push_back("variable");
-            produceResult["variable"].push_back("numberOfData");
+                if (nonArithmetic->elements.empty())
+            {
+                string variable = nonArithmetic->value;
+                string property = "*";
+                produceResult["variable"].push_back(result->elements[0]->elements[1]->value
+                        + "(" + variable + "." + property + ")");
+                produceResult["variable"].push_back("variable");
+                produceResult["variable"].push_back("numberOfData");
+            } else
+            {
+                string variable = nonArithmetic->elements[0]->value;
+                string property = nonArithmetic->elements[1]->elements[0]->value;
+                produceResult["variable"].push_back(result->elements[0]->elements[1]->value
+                        + "(" + variable + "." + property + ")");
+                produceResult["variable"].push_back("variable");
+                produceResult["variable"].push_back("numberOfData");
+            }
             if (Operator::isGroupBy)
             {
                 produceResult["variable"].push_back("groupByKey");
@@ -329,6 +352,7 @@ string Projection::execute() {
         } else if (ast->nodeType == Const::AS) {
             if (ast->elements[0]->nodeType == Const::FUNCTION_BODY) {
                 auto function = ast->elements[0];
+
                 operand["functionName"] = function->elements[0]->elements[1]->value;
 
                 if (Operator::isGroupBy){
@@ -341,6 +365,8 @@ string Projection::execute() {
 
                 }
             } else {
+
+
                 auto lookupOpr = ast->elements[0];
                 operand["Type"] = Const::PROPERTY_LOOKUP;
                 operand["variable"] = lookupOpr->elements[0]->value;
@@ -355,10 +381,20 @@ string Projection::execute() {
         } else if ( QueryPlanner::isAvailable(Const::FUNCTION_BODY, ast)) {
 
             auto nonArithmetic = ast->elements[1]->elements[0];
-            string variable = nonArithmetic->elements[0]->value;
-            string property = nonArithmetic->elements[1]->elements[0]->value;
-            operand["functionName"] = ast->elements[0]->elements[1]->value;
-            operand["assign"] = ast->elements[0]->elements[1]->value + "(" + variable + "." + property + ")";
+            if (nonArithmetic->elements.empty())
+            {
+                string variable = nonArithmetic->value;
+                string property = "*";
+                operand["functionName"] = ast->elements[0]->elements[1]->value;
+                operand["assign"] = ast->elements[0]->elements[1]->value + "(" + variable + "." + property + ")";
+            }else
+            {
+                string variable = nonArithmetic->elements[0]->value;
+                string property = nonArithmetic->elements[1]->elements[0]->value;
+                operand["functionName"] = ast->elements[0]->elements[1]->value;
+                operand["assign"] = ast->elements[0]->elements[1]->value + "(" + variable + "." + property + ")";
+            }
+
         }
 
         projection["project"].push_back(operand);  // Append operand to the array
@@ -869,8 +905,16 @@ string AggregationFunction::execute() {
     eagerFunction["Operator"] = "AggregationFunction";
     eagerFunction["NextOperator"] = input->execute();
     eagerFunction["FunctionName"] = functionName;
-    eagerFunction["variable"] = ast->elements[0]->value;
-    eagerFunction["property"] = ast->elements[1]->elements[0]->value;
+    if (functionName == "count" || functionName == "COUNT")
+    {
+        eagerFunction["variable"] = ast->value;
+        eagerFunction["property"] = "*";
+    } else
+    {
+        eagerFunction["variable"] = ast->elements[0]->value;
+        eagerFunction["property"] = ast->elements[1]->elements[0]->value;
+    }
+
     Operator::isAggregate = true;
     if ( functionName == "avg" || functionName == "AVG"){
         Operator::aggregateType = AggregationFactory::AVERAGE;

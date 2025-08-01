@@ -171,10 +171,11 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
                 temp->setOperator(currentOperator);
                 currentOperator = temp;
             } else if (node->nodeType == Const::LIMIT) {
-                auto temp = static_cast<ProduceResults*>(currentOperator);
-                currentOperator = new Limit(temp->getOperator(), node->elements[0]);
-                temp->setOperator(currentOperator);
-                currentOperator = temp;
+                Operator::limit = std::stoi(node->elements[0]->value);
+                // auto temp = static_cast<ProduceResults*>(currentOperator);
+                // currentOperator = new Limit(temp->getOperator(), node->elements[0]->value);
+                // temp->setOperator(currentOperator);
+                // currentOperator = temp;
             } else if (node->nodeType == Const::SKIP) {
                 auto temp = static_cast<ProduceResults*>(currentOperator);
                 currentOperator = new Skip(temp->getOperator(), node->elements[0]);

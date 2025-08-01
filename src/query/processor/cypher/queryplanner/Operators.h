@@ -37,6 +37,7 @@ class Operator {
 
     static bool isAggregate;
     bool isApply = false;
+    static int limit;
     static bool isGroupBy;
     static string aggregateType;
     static string aggregateKey;

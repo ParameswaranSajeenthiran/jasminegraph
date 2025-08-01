@@ -311,12 +311,19 @@ void CypherQueryExecutor::execute() {
 
                     cypher_logger.info("START MASTER SORTING");
                     cypher_logger.info(std::to_string(mergeQueue.size()));
+                    int count = 0;
                     while (!mergeQueue.empty()) {
                         BufferEntry smallest = mergeQueue.top();
                         cypher_logger.info(smallest.value);
                         size_t queueSize = mergeQueue.size();
                         cypher_logger.debug(std::to_string(queueSize));
                         mergeQueue.pop();
+
+                        if (Operator::limit>0 && count >= Operator::limit) {
+                            cypher_logger.info("Limit reached, stopping aggregation");
+                            break;
+                        }
+                        count++;
                         result_wr = write(connFd, smallest.value.c_str(), smallest.value.length());
                         if (result_wr < 0) {
                             cypher_logger.error("Error writing to socket");
@@ -501,7 +508,12 @@ void CypherQueryExecutor::execute() {
                             if (data == "-1") {
                                 closeFlag++;
                             } else {
+                                if (Operator::limit>0 && count >= Operator::limit) {
+                                    cypher_logger.info("Limit reached, stopping aggregation");
+                                    break;
+                                }
                                 count++;
+
                                 result_wr = write(connFd, data.c_str(), data.length());
                                 result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
                                                   Conts::CARRIAGE_RETURN_NEW_LINE.size());
