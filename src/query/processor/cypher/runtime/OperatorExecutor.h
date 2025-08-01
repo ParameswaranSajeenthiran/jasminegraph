@@ -36,6 +36,7 @@ class OperatorExecutor {
     void DirectedAllRelationshipScan(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
     void NodeByIdSeek(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
     void AggregationFunction(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
+    void GroupBy(SharedBuffer& buffer, std::string jsonPlan, GraphConfig gc);
     void Create(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
     void CartesianProduct(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);
     void Projection(SharedBuffer &buffer, string jsonPlan, GraphConfig gc);

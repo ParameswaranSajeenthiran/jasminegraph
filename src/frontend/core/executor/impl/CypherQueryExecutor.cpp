@@ -212,7 +212,7 @@ void CypherQueryExecutor::execute() {
                 if (Operator::aggregateType == AggregationFactory::AVERAGE) {
                     Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::AVERAGE);
                     while (true) {
-                        if (closeFlag == numberOfPartitions) {
+                        if (closeFlag >= numberOfPartitions) {
                             break;
                         }
                         for (size_t i = 0; i < bufferPool.size(); ++i) {
@@ -228,7 +228,7 @@ void CypherQueryExecutor::execute() {
                     }
                     aggregation->getResult(connFd);
                 }else if (Operator::aggregateType == AggregationFactory::COUNT) {
-                    Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::COUNT);
+                    Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::COUNT );
                     while (true) {
                         if (closeFlag == numberOfPartitions) {
                             break;
@@ -366,7 +366,130 @@ void CypherQueryExecutor::execute() {
                 int totalTime = duration.count();
                 cypher_logger.info("Total time taken for aggregation: " + std::to_string(totalTime) + " ms");
                 Operator::isAggregate = false;
-            } else {
+            } else if (Operator::isGroupBy) {
+               std::unordered_map<std::string, std::vector<Aggregation*>> groupedHelpers;
+
+               cypher_logger.debug("GroupBy: Starting to process rows from sharedBuffer");
+               int rowCount = 0;
+
+               while (true)
+               {
+                   cypher_logger.debug("GroupBy: Top of main while loop. closeFlag = " + std::to_string(closeFlag) + ", numberOfPartitions = " + std::to_string(numberOfPartitions));
+                   if (closeFlag == numberOfPartitions) {
+                       cypher_logger.debug("GroupBy: All partitions closed. Writing grouped results to client.");
+
+                       for (const auto &[groupKey, helpers] : groupedHelpers) {
+                           cypher_logger.debug("GroupBy: Writing groupKey: " + groupKey + " with " + std::to_string(helpers.size()) + " helpers.");
+                           json out;
+                           std::istringstream keyStream(groupKey);
+                           std::string token;
+                           int i = 0;
+
+                           json group = json::parse(helpers[0]->data);
+                           cypher_logger.debug("GroupBy: Initial group data: " + group.dump());
+
+                           // Add aggregated results
+                           for (size_t j = 0; j < helpers.size(); ++j) {
+                               std::string variableName = helpers[j]->getVariableName();
+                               cypher_logger.debug("GroupBy: Adding aggregation result for variable: " + variableName + ", type: " + helpers[j]->getType());
+                               group[variableName] = json::parse(helpers[j]->data)[helpers[j]->getType()];
+                               group.erase(helpers[j]->getType());
+                               group.erase("groupByKey");
+                           }
+                           cypher_logger.debug("GroupBy: Final group data to write: " + group.dump());
+                           result_wr = write(connFd, group.dump().c_str(), group.dump().length());
+                           cypher_logger.debug("GroupBy: Wrote group data to client, result_wr = " + std::to_string(result_wr));
+                           result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                                             Conts::CARRIAGE_RETURN_NEW_LINE.size());
+                           cypher_logger.debug("GroupBy: Wrote CRLF to client, result_wr = " + std::to_string(result_wr));
+                       }
+                       cypher_logger.debug("GroupBy: Finished writing all groups. Breaking main loop.");
+                       break;
+                   }
+                   for (size_t i = 0; i < bufferPool.size(); ++i)
+                   {
+                       cypher_logger.debug("GroupBy: Checking bufferPool[" + std::to_string(i) + "]");
+                       std::string data;
+                       if (bufferPool[i]->tryGet(data))
+                       {
+                           cypher_logger.debug("GroupBy: bufferPool[" + std::to_string(i) + "] tryGet success. Data: " + data);
+                           if (data == "-1") {
+                               closeFlag++;
+                               cypher_logger.debug("GroupBy: Received close flag from bufferPool[" + std::to_string(i) + "]. closeFlag now: " + std::to_string(closeFlag));
+                           }
+                        else {
+
+                           try {
+                               json rowJson = json::parse(data);
+                               cypher_logger.debug("GroupBy: Processing row: " + data);
+
+                               // === Build group key ===
+                               std::string groupKey = rowJson["groupByKey"];
+                               cypher_logger.debug("GroupBy: Computed groupKey: " + groupKey);
+                               std::vector<std::tuple<std::string, std::string>> aggregateColumns;
+                               cypher_logger.debug("GroupBy: Extracting aggregateColumns");
+                               for (const auto &agg : rowJson["variable"]) {
+                                   std::string func = agg["functionName"];
+                                   std::string var = agg["variable"];
+                                   // std::string prop = agg["property"];
+                                   aggregateColumns.emplace_back(func, var);
+                                   cypher_logger.debug("GroupBy: aggregateColumn - function: " + func + ", variable: " + var );
+                               }
+                               // === Create aggregation helpers per group if not exists ===
+                               if (groupedHelpers.find(groupKey) == groupedHelpers.end()) {
+                                   cypher_logger.debug("GroupBy: Creating new helpers for groupKey: " + groupKey);
+                                   std::vector<Aggregation*> helpers;
+                                   for (const auto &[func, var] : aggregateColumns) {
+                                       cypher_logger.debug("GroupBy: Creating AggregationHelper for function: " + func + ", variable: " + var);
+                                       Aggregation* helper = AggregationFactory::getAggregationMethod(func);
+                                       helper->setVariableName(var);
+                                       helper->setTpye(func);
+                                       helpers.push_back(helper);
+                                   }
+                                   groupedHelpers[groupKey] = helpers;
+                                   cypher_logger.debug("GroupBy: Created new helpers for groupKey: " + groupKey);
+                               }
+
+                               // === Insert data into helpers ===
+                               for (Aggregation* helper : groupedHelpers[groupKey]) {
+                                   cypher_logger.debug("GroupBy: Inserting data into AggregationHelper for groupKey: " + groupKey + ", variable: " + helper->getVariableName() + ", type: " + helper->getType());
+                                   json row = rowJson[helper->getVariableName()];
+                                   // json row = json::parse(var);
+                                      cypher_logger.debug("GroupBy: Row data for variable " + helper->getVariableName() + ": " + row.dump());
+
+                    if (row.is_object()) {
+                       rowJson[helper->getType()] = row[helper->getType()];
+                        cypher_logger.debug("GroupBy: Row is object, extracted value for " + helper->getType() + ": " + row[helper->getType()].dump());
+                   } else if (row.is_string()) {
+                       try {
+                           json rowObj = json::parse(row.get<std::string>());
+                            cypher_logger.debug("GroupBy: Row is string, parsed to JSON: " + rowObj.dump());
+                           rowJson[helper->getType()] = rowObj[helper->getType()];
+                            cypher_logger.debug("GroupBy: Extracted value for " + helper->getType() + ": " + rowObj[helper->getType()].dump());
+                       } catch (const std::exception& e) {
+                           cypher_logger.warn("Failed to parse row string to JSON: " + std::string(e.what()));
+                       }
+                   }
+                                   rowJson["variable"] = helper->getType();
+                                   // rowJson["variable"] = helper->getType();
+                                      cypher_logger.debug("GroupBy: Row JSON after processing: " + rowJson.dump());
+                                   helper->insert(rowJson.dump());
+                                   cypher_logger.debug("GroupBy: Inserted data into AggregationHelper for groupKey: " + groupKey);
+                               }
+                               rowCount++;
+                               cypher_logger.debug("GroupBy: rowCount incremented to " + std::to_string(rowCount));
+                           } catch (const std::exception& e) {
+                               cypher_logger.warn("GroupBy: Skipping malformed row. Exception: " + std::string(e.what()));
+                           } catch (...) {
+                               cypher_logger.warn("GroupBy: Skipping malformed row. Unknown exception.");
+                           }
+                       }
+                   }
+                   }
+               }
+
+                Operator::isGroupBy = false;
+           } else {
                 int count = 0;
                 while (true) {
                     if (closeFlag == numberOfPartitions) {

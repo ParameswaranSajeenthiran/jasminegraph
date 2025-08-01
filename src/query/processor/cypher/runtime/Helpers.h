@@ -72,6 +72,24 @@ public:
    virtual ~AggregationHelper() = default;
    virtual string getFinalResult() = 0;
    virtual void insertData(string data) = 0;
+   virtual void updateAggregateProperty(string property, unordered_map<string, string> value) {
+
+      if (this->aggregateProperties.find(property)!= aggregateProperties.end()) {
+         auto &propertyMap = this->aggregateProperties[property];
+         for (const auto &pair : value) {
+            propertyMap[pair.first] = pair.second;
+         }
+      } else {
+         this->aggregateProperties[property] = value;
+      }
+   }
+   virtual std::unordered_map<string, string> getAggregateProperties(std::string property)
+   {
+      return aggregateProperties[property];
+   }
+
+private:
+   unordered_map<string, std::unordered_map<string,string>> aggregateProperties; // To store aggregated values of properteis
 };
 
 class CountAggregationHelper : public AggregationHelper

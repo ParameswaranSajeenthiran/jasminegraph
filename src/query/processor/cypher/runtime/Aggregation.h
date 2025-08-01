@@ -23,13 +23,37 @@ using namespace std;
 
 class Aggregation {
  public:
+    string data;
+
     virtual void getResult(int connFd) = 0;
     virtual void insert(string data) = 0;
+    virtual void setVariableName(string variable)
+    {
+        this->variableName = variable;
+    } ;
+
+    virtual std::string getVariableName() const
+    {
+        return variableName;
+    }
+    virtual  void setTpye (string type)
+    {
+        this->type = type;
+    } ;
+
+    virtual std::string getType() const
+    {
+        return type;
+    }
+
+
+ private :
+    string variableName;
+    string type;
 };
 
 class AverageAggregation : public Aggregation {
  public:
-    string data;
     int numberOfData = 0;
     float average = 0.0f;
     AverageAggregation()= default;
@@ -39,7 +63,7 @@ class AverageAggregation : public Aggregation {
 
 class CountAggregation : public Aggregation {
  public:
-    string data;
+
     int count = 0;
     CountAggregation()= default;
     void getResult(int connFd) override;

@@ -13,10 +13,10 @@ limitations under the License.
 
 #include "AggregationFactory.h"
 
-const string AggregationFactory::AVERAGE = "Average";
+const string AggregationFactory::AVERAGE = "avg";
 const string AggregationFactory::DESC = "DESC";
 const string AggregationFactory::ASC = "ASC";
-const string AggregationFactory::COUNT = "Count";
+const string AggregationFactory::COUNT = "count";
 
 Aggregation* AggregationFactory::getAggregationMethod(std::string type) {
     if (type == AVERAGE) {

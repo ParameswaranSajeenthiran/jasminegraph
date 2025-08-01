@@ -97,6 +97,7 @@ set(HEADERS globals.h
         src/query/processor/cypher/queryplanner/QueryPlanner.h
         src/query/processor/cypher/runtime/InstanceHandler.h
         src/query/processor/cypher/runtime/OperatorExecutor.h
+        src/query/processor/cypher/runtime/GroupByExecutor.h
         src/query/processor/cypher/util/SharedBuffer.h
         src/nativestore/MetaPropertyLink.h
         src/nativestore/MetaPropertyEdgeLink.h
@@ -187,6 +188,8 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/query/processor/cypher/queryplanner/QueryPlanner.cpp
         src/query/processor/cypher/runtime/InstanceHandler.cpp
         src/query/processor/cypher/runtime/OperatorExecutor.cpp
+        src/query/processor/cypher/runtime/GroupByExecutor.cpp
+
         src/query/processor/cypher/util/SharedBuffer.cpp
         src/nativestore/MetaPropertyLink.cpp
         src/nativestore/MetaPropertyEdgeLink.cpp
@@ -208,7 +211,9 @@ endif ()
 file(GLOB GENERATED_SRC /home/ubuntu/software/antlr/*.cpp)
 if(NOT GENERATED_SRC)
     message(WARNING "No ANTLR generated files found in /home/ubuntu/software/antlr/")
-    set(GENERATED_SRC "")
+    set(GENERATED_SRC ""
+            src/query/processor/cypher/runtime/GroupByExecutor.cpp
+            src/query/processor/cypher/runtime/GroupByExecutor.h)
 endif()
 
 add_library(JasmineGraphLib ${HEADERS} ${SOURCES} ${GENERATED_SRC})

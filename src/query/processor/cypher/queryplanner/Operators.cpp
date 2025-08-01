@@ -26,6 +26,7 @@ using namespace std;
 Logger operatorLogger;
 using json = nlohmann::json;
 
+bool Operator::isGroupBy = false;
 bool Operator::isAggregate = false;
 std::string Operator::aggregateType = "";
 std::string Operator::aggregateKey = "";
@@ -93,6 +94,10 @@ string ProduceResults::execute() {
                 string property = nonArithmetic->elements[1]->elements[0]->value;
                 produceResult["variable"].push_back("variable");
                 produceResult["variable"].push_back("numberOfData");
+                if (Operator::isGroupBy)
+                {
+                    produceResult["variable"].push_back("groupByKey");
+                }
             }
             produceResult["variable"].push_back(result->elements[1]->value);
         } else if (result->nodeType == Const::NON_ARITHMETIC_OPERATOR) {
@@ -108,6 +113,10 @@ string ProduceResults::execute() {
                     + "(" + variable + "." + property + ")");
             produceResult["variable"].push_back("variable");
             produceResult["variable"].push_back("numberOfData");
+            if (Operator::isGroupBy)
+            {
+                produceResult["variable"].push_back("groupByKey");
+            }
         }
     }
     return produceResult.dump();
@@ -321,6 +330,16 @@ string Projection::execute() {
             if (ast->elements[0]->nodeType == Const::FUNCTION_BODY) {
                 auto function = ast->elements[0];
                 operand["functionName"] = function->elements[0]->elements[1]->value;
+
+                if (Operator::isGroupBy){
+                    auto function = ast->elements[0];
+                    auto nonArithmetic = ast->elements[0]->elements[1]->elements[0];
+                    string variable = nonArithmetic->elements[0]->value;
+                    string property = nonArithmetic->elements[1]->elements[0]->value;
+                    operand["functionName"] = function->elements[0]->elements[1]->value + "(" + variable + "." + property + ")";
+
+
+                }
             } else {
                 auto lookupOpr = ast->elements[0];
                 operand["Type"] = Const::PROPERTY_LOOKUP;
@@ -328,9 +347,13 @@ string Projection::execute() {
                 operand["property"] = lookupOpr->elements[1]->elements[0]->value;
             }
             operand["assign"] = ast->elements[1]->value;
+
+
+
         } else if (ast->nodeType == Const::VARIABLE) {
             continue;
         } else if ( QueryPlanner::isAvailable(Const::FUNCTION_BODY, ast)) {
+
             auto nonArithmetic = ast->elements[1]->elements[0];
             string variable = nonArithmetic->elements[0]->value;
             string property = nonArithmetic->elements[1]->elements[0]->value;
@@ -658,48 +681,48 @@ void Apply::executeDistributed(const std::string& masterIP, int graphId, int num
         }
 
 
-
-        if (leftQueryPlan.find("AggregationFunction") != std::string::npos)
-        {
-            if (Operator::aggregateType == AggregationFactory::AVERAGE) {
-                Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::AVERAGE);
-                while (true) {
-                    if (closeFlag == numberOfPartitions) {
-                        break;
-                    }
-                    for (size_t i = 0; i < bufferPool.size(); ++i) {
-                        std::string data;
-                        if (bufferPool[i]->tryGet(data)) {
-                            if (data == "-1") {
-                                closeFlag++;
-                            } else {
-                                aggregation->insert(data);
-                            }
-                        }
-                    }
-                }
-                aggregation->getResult(connFd);
-            }else if (Operator::aggregateType == AggregationFactory::COUNT) {
-                Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::COUNT);
-                while (true) {
-                    if (closeFlag == numberOfPartitions) {
-                        break;
-                    }
-                    for (size_t i = 0; i < bufferPool.size(); ++i) {
-                        std::string data;
-                        if (bufferPool[i]->tryGet(data)) {
-                            if (data == "-1") {
-                                closeFlag++;
-                            } else {
-                                aggregation->insert(data);
-                            }
-                        }
-                    }
-                }
-                aggregation->getResult(connFd);
-            }
-
-        }
+        //
+        // if (leftQueryPlan.find("AggregationFunction") != std::string::npos)
+        // {
+        //     if (Operator::aggregateType == AggregationFactory::AVERAGE) {
+        //         Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::AVERAGE);
+        //         while (true) {
+        //             if (closeFlag == numberOfPartitions) {
+        //                 break;
+        //             }
+        //             for (size_t i = 0; i < bufferPool.size(); ++i) {
+        //                 std::string data;
+        //                 if (bufferPool[i]->tryGet(data)) {
+        //                     if (data == "-1") {
+        //                         closeFlag++;
+        //                     } else {
+        //                         aggregation->insert(data);
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //         aggregation->getResult(connFd);
+        //     }else if (Operator::aggregateType == AggregationFactory::COUNT) {
+        //         Aggregation* aggregation = AggregationFactory::getAggregationMethod(AggregationFactory::COUNT);
+        //         while (true) {
+        //             if (closeFlag == numberOfPartitions) {
+        //                 break;
+        //             }
+        //             for (size_t i = 0; i < bufferPool.size(); ++i) {
+        //                 std::string data;
+        //                 if (bufferPool[i]->tryGet(data)) {
+        //                     if (data == "-1") {
+        //                         closeFlag++;
+        //                     } else {
+        //                         aggregation->insert(data);
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //         aggregation->getResult(connFd);
+        //     }
+        //
+        // }
 
 
         for (size_t i = 0; i < leftBufferPool.size(); ++i) {
@@ -856,7 +879,21 @@ string AggregationFunction::execute() {
     };
     return eagerFunction.dump();
 }
+GroupBy::GroupBy(Operator * input, ASTNode* ast, std::vector<std::unordered_map<string ,string >> groupByColumns ,
+           std::vector<std::unordered_map<string ,string >> aggregateColumns) : input(input), ast(ast), groupByColumns(groupByColumns), aggregateColumns(aggregateColumns) {};
 
+string GroupBy::execute()
+{
+    json groupByOperator;
+    groupByOperator["Operator"] = "GroupBy";
+    if (input != nullptr) {
+        groupByOperator["NextOperator"] = input->execute();
+    }
+    groupByOperator["groupByColumns"] = groupByColumns;
+    groupByOperator["aggregateColumns"] = aggregateColumns;
+    Operator::isGroupBy = true;
+    return groupByOperator.dump();
+}
 Create::Create(Operator *input, ASTNode *ast) : ast(ast), input(input) {}
 
 string Create::execute() {

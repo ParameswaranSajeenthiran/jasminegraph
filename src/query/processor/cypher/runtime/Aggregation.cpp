@@ -30,6 +30,7 @@ void AverageAggregation::getResult(int connFd) {
     }
 }
 
+
 void AverageAggregation::insert(std::string data) {
     json workerData = json::parse(data);
     string variable = workerData["variable"];
@@ -60,13 +61,17 @@ void CountAggregation::getResult(int connFd) {
 }
 
 void CountAggregation::insert(std::string data) {
+    aggregateLogger.debug("CountAggregation::insert - Received data: " + data);
     json workerData = json::parse(data);
     string variable = workerData["variable"];
     int localCount = workerData[variable].get<int>();
+    aggregateLogger.debug("CountAggregation::insert - Variable: " + variable + ", Local count: " + std::to_string(localCount));
     count += localCount;
+    aggregateLogger.debug("CountAggregation::insert - Updated total count: " + std::to_string(count));
     workerData.erase("variable");
     workerData.erase("numberOfData");
     workerData.erase(variable);
     workerData[variable] = count;
     this->data = workerData.dump();
+    aggregateLogger.debug("CountAggregation::insert - Updated data: " + this->data);
 }

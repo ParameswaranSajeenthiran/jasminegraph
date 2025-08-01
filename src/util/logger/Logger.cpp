@@ -65,7 +65,7 @@ void Logger::log(std::string message, const std::string log_type) {
     } else if (log_type.compare("error") == 0) {
         daily_logger->error(message);
         logger->error(message);
-    } else if (log_type.compare("debug") == 0) {
+    } else if (log_type.compare("Fdebug") == 0) {
         daily_logger->debug(message);
         logger->debug(message);
     }

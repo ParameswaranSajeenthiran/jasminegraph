@@ -196,37 +196,82 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
         vector<ASTNode*> nonArith = getSubTreeListByNodeType(ast, Const::NON_ARITHMETIC_OPERATOR);
         vector<ASTNode*> property;
         Operator* temp_opt = nullptr;
+        vector<ASTNode*> nonArithAndNonFunctionBodyNodes = getNonFunctionBodyNonArithmeticNodes(ast);
+        if (! nonArithAndNonFunctionBodyNodes.empty() && isAvailable(Const::FUNCTION_BODY, ast)){
 
-        if (!nonArith.empty()) {
-            for (auto* node : nonArith) {
+
+            vector<unordered_map< string ,string >> groupByColumns;
+
+            for (auto* node :nonArithAndNonFunctionBodyNodes) {
+
+               unordered_map<string ,string > groupByColumn;
                 if (isAvailable(Const::PROPERTY_LOOKUP, node)) {
-                    property.push_back(node);
+                    groupByColumn["variable"] = node->elements[0]->value;
+                    groupByColumn["property"] = node->elements[1]->elements[0]->value;
+                } else if (isAvailable(Const::AS, node)) {
+                    groupByColumn["variable"] = node->elements[0]->elements[0]->value;
+                    groupByColumn["property"] = node->elements[1]->value;
                 }
+                groupByColumns.push_back(groupByColumn);
             }
-            if (!property.empty()) {
-                temp_opt = new CacheProperty(currentOperator, property);
-            }
-        }
 
-        if (isAvailable(Const::FUNCTION_BODY, ast)) {
-
-            auto functions = getSubTreeListByNodeType(ast, Const::FUNCTION_BODY);
-            for (auto func : functions) {
+            vector<unordered_map<string ,string >> aggregateColumns;
+            for (auto* func : getSubTreeListByNodeType(ast, Const::FUNCTION_BODY)) {
                 string name = func->elements[0]->elements[1]->value;
-                // if (name == "avg" || name == "AVG") {
-                if (temp_opt!= nullptr)
-                {
-                    temp_opt = new AggregationFunction(temp_opt, func->elements[1]->elements[0], name);
+                unordered_map<string, string> aggregateColumn;
+                aggregateColumn["variable"] = func->elements[1]->elements[0]->elements[0]->value;
+                aggregateColumn["property"] = func->elements[1]->elements[0]->elements[1]->elements[0]->value;
+                aggregateColumn["functionName"] = name;
 
-                }else
-                {
-                    temp_opt = new AggregationFunction(currentOperator, func->elements[1]->elements[0], name);
+                aggregateColumns.push_back(aggregateColumn);
 
+            }
+
+            if (temp_opt!= nullptr)
+            {
+                temp_opt = new GroupBy(temp_opt, ast, groupByColumns, aggregateColumns);
+
+            }else
+            {
+                temp_opt = new GroupBy(currentOperator, ast, groupByColumns, aggregateColumns);
+
+            }
+            temp_opt = new GroupBy(currentOperator, ast, groupByColumns, aggregateColumns);
+
+        } else {
+            if (!nonArith.empty()) {
+                for (auto* node : nonArith) {
+                    if (isAvailable(Const::PROPERTY_LOOKUP, node)) {
+                        property.push_back(node);
+                    }
                 }
-                // }
+                if (!property.empty()) {
+                    temp_opt = new CacheProperty(currentOperator, property);
+                }
+
+
+
+            }
+
+            if (isAvailable(Const::FUNCTION_BODY, ast)) {
+
+                auto functions = getSubTreeListByNodeType(ast, Const::FUNCTION_BODY);
+                for (auto func : functions) {
+                    string name = func->elements[0]->elements[1]->value;
+                    // if (name == "avg" || name == "AVG") {
+                    if (temp_opt!= nullptr)
+                    {
+                        temp_opt = new AggregationFunction(temp_opt, func->elements[1]->elements[0], name);
+
+                    }else
+                    {
+                        temp_opt = new AggregationFunction(currentOperator, func->elements[1]->elements[0], name);
+
+                    }
+                    // }
+                }
             }
         }
-
         if (temp_opt != nullptr) {
             if (var == "distinct") {
                 temp_opt = new Distinct(temp_opt, ast->elements);
@@ -569,6 +614,26 @@ vector<ASTNode*> QueryPlanner::getSubTreeListByNodeType(ASTNode* root, string no
             treeList.push_back(element);
         } else if (!element->elements.empty()) {
             temp = getSubTreeListByNodeType(element, nodeType);
+            for (auto* e : temp) {
+                treeList.push_back(e);
+            }
+            temp.clear();
+        }
+    }
+    return treeList;
+}
+
+vector<ASTNode*> QueryPlanner::getNonFunctionBodyNonArithmeticNodes(ASTNode* root ) {
+    vector<ASTNode*> treeList;
+    vector<ASTNode*> temp;
+    for (auto* element : root->elements) {
+        if (verifyTreeType(element, Const::FUNCTION_BODY)) {
+            continue; // Skip function bodies
+        }
+        if (verifyTreeType(element, Const::NON_ARITHMETIC_OPERATOR)) {
+            treeList.push_back(element);
+        } else if (!element->elements.empty()) {
+            temp = getSubTreeListByNodeType(element, Const::NON_ARITHMETIC_OPERATOR);
             for (auto* e : temp) {
                 treeList.push_back(e);
             }

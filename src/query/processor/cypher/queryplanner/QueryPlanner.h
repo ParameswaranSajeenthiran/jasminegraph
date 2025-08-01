@@ -26,6 +26,8 @@ class QueryPlanner {
     bool isAllChildrenAreGivenType(string nodeType, ASTNode* root);
     static bool isAvailable(string nodeType, ASTNode* subtree);
     vector<ASTNode*> getSubTreeListByNodeType(ASTNode* root, string nodeType);
+    vector<ASTNode*> getNonFunctionBodyNonArithmeticNodes(ASTNode* root);
+    vector<ASTNode*> getNonFunctionBodyNonArithmeticOperator(ASTNode* root);
     ASTNode* verifyTreeType(ASTNode* root, string nodeType);
     pair<vector<bool>, vector<ASTNode*>> getRelationshipDetails(ASTNode* node);
     pair<vector<bool>, vector<ASTNode*>> getNodeDetails(ASTNode* node);

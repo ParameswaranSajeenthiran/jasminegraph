@@ -67,6 +67,7 @@ bool FilterHelper::evaluateComparison(std::string condition, std::string raw) {
         std::cout << "[INFO] Left side is other type: " << predicate["left"]["type"] << std::endl;
         //  only evaluating string, decimal, boolean, null for now
         leftValue = evaluateOtherTypes(predicate["left"].dump());
+        std::cout << "[INFO] Evaluated left side value: " << leftValue.index() << std::endl;
     }
 
     if (predicate["right"]["type"] == "PROPERTY_LOOKUP") {
@@ -83,7 +84,9 @@ bool FilterHelper::evaluateComparison(std::string condition, std::string raw) {
         std::cout << "[INFO] Right side is other type: " << predicate["right"]["type"] << std::endl;
         //  only evaluating string, decimal, boolean, null for now
         rightValue = evaluateOtherTypes(predicate["right"].dump());
-    }
+std::visit([](auto&& val) {
+            std::cout << "[INFO] Evaluated right side value: " << val << std::endl;
+        }, rightValue);    }
     string op = predicate["operator"];
     std::cout << "[INFO] Operator: " << op << std::endl;
 
@@ -248,6 +251,9 @@ ValueType FilterHelper::evaluatePropertyLookup(std::string property, std::string
 
     try {
         if (type == "STRING") {
+            if (value.size() >= 2 && value.front() == '\'' && value.back() == '\'') {
+                return value.substr(1, value.size() - 2);  // Remove first and last character ' '
+            }
             std::cout << "[DEBUG] Returning STRING value: " << value << std::endl;
             return value;
         } else if (type == "DECIMAL") {
@@ -328,8 +334,12 @@ ValueType FilterHelper::evaluateOtherTypes(std::string data) {
     json val = json::parse(data);
     if (val["type"] == "STRING") {
         string str = val["value"];
+        std::cout << "[DEBUG] evaluateOtherTypes: STRING value = " << str << std::endl;
         if (str.size() >= 2 && str.front() == '\'' && str.back() == '\'') {
             return str.substr(1, str.size() - 2);  // Remove first and last character ' '
+        }
+        if (str.size() >= 2 && str.front() == '\\' && str.back() == '\\') {
+            return str.substr(2, str.size() - 3);  // Remove first and last character ' '
         }
         return val["value"];
     } else if (val["type"] == "DECIMAL") {
@@ -439,6 +449,9 @@ void AverageAggregationHelper::insertData(std::string data) {
     float property = stof(value);
     this->numberOfData++;
     this->localAverage = (this->localAverage * (this->numberOfData - 1) + property) / this->numberOfData;
+    // std:: unordered_map<string , string > valueMap = this->getAggregateProperties(this->variable+"."this);
+    // valueMap["localAverage"] = (this->localAverage * (this->numberOfData - 1) + property) / this->numberOfData;
+
 }
 
 string AverageAggregationHelper::getFinalResult() {
@@ -467,6 +480,7 @@ string CountAggregationHelper::getFinalResult()
     return data.dump();
 
 }
+
 
 
 CreateHelper::CreateHelper(vector<json> elements, std::string partitionAlgo, GraphConfig gc, string masterIP) :
@@ -730,7 +744,7 @@ void CreateHelper::insertFromData(std::string data, SharedBuffer &buffer) {
                     if (worker) {
                         std::tie(host, port, dataPort) = *worker;
                     } else {
-                        return;
+                        continue;
                     }
                     auto dataPublisher = new DataPublisher(port, host, dataPort);
                     json node;
@@ -739,11 +753,11 @@ void CreateHelper::insertFromData(std::string data, SharedBuffer &buffer) {
                     node["pid"] = partitionedEdge[0].second;
                     node["isNode"] = true;
                     dataPublisher->publish(node.dump());
-                    return;
+                    continue;
                 }
 
                 if (!newNode) {
-                    return;
+                    continue;
                 }
 
                 char value[PropertyLink::MAX_VALUE_SIZE] = {0};
@@ -765,7 +779,7 @@ void CreateHelper::insertFromData(std::string data, SharedBuffer &buffer) {
 
                 buffer.add(rawObj.dump());
             }
-            return;
+            continue;
         }
     }
 }
@@ -888,7 +902,7 @@ void CreateHelper::insertWithoutData(SharedBuffer &buffer) {
 
                 if (!newNode) {
                     std::cout << "[DEBUG] newNode is nullptr, returning." << std::endl;
-                    return;
+                    continue;
                 }
 
                 char value[PropertyLink::MAX_VALUE_SIZE] = {0};
@@ -914,7 +928,7 @@ void CreateHelper::insertWithoutData(SharedBuffer &buffer) {
                 buffer.add(rawObj.dump());
             }
             std::cout << "[DEBUG] Node insert processing complete." << std::endl;
-            return;
+            continue;
         }
     }
 }

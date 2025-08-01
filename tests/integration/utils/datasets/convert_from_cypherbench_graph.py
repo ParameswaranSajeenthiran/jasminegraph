@@ -37,11 +37,11 @@ def get_numeric_id(eid):
 
 def filter_string_props(props):
     """Filter and convert properties to string if they are string-typed."""
-    return {k: str(v) for k, v in props.items() if isinstance(v, str)}
+    return {k: str(v) for k, v in props.items() if isinstance(v, str) or isinstance(v,int)}
 
 
 # Write converted graph with properties
-with open("data/output/terrorist_attack_simplekg1.txt", "w", encoding="utf-8") as outfile:
+with open("data/output/terrorist_attack_simplekg6.txt", "w", encoding="utf-8") as outfile:
     for rel in relations:
         src_id = get_numeric_id(rel["subj_id"])
         dst_id = get_numeric_id(rel["obj_id"])

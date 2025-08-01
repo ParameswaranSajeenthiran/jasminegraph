@@ -18,6 +18,7 @@ limitations under the License.
 #include <string>
 #include <iostream>
 #include <memory>
+#include <unordered_map>
 #include <vector>
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
@@ -36,6 +37,7 @@ class Operator {
 
     static bool isAggregate;
     bool isApply = false;
+    static bool isGroupBy;
     static string aggregateType;
     static string aggregateKey;
 };
@@ -315,6 +317,20 @@ class AggregationFunction : public Operator {
     Operator* input;
     ASTNode* ast;
     string functionName;
+};
+
+class GroupBy : public Operator
+{
+public:
+   GroupBy(Operator * input, ASTNode* ast, std::vector<std::unordered_map<string ,string >> groupByColumns ,
+           std::vector<std::unordered_map<string ,string >> aggregateColumns);
+   string execute() override;
+private:
+   Operator* input;
+   ASTNode* ast;
+   std::vector<std::unordered_map<string ,string >> groupByColumns; // Columns to group by
+   std::vector<std::unordered_map<string ,string >> aggregateColumns; // Columns to aggregate
+
 };
 
 class Create : public Operator {

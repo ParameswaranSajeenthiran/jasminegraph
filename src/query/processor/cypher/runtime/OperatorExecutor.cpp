@@ -19,6 +19,8 @@ limitations under the License.
 #include <thread>
 #include <queue>
 
+#include "GroupByExecutor.h"
+
 Logger execution_logger;
 std::unordered_map<std::string,
     std::function<void(OperatorExecutor&, SharedBuffer&, std::string, GraphConfig)>> OperatorExecutor::methodMap;
@@ -85,6 +87,11 @@ void OperatorExecutor::initializeMethodMap() {
     methodMap["AggregationFunction"] = [](OperatorExecutor &executor, SharedBuffer &buffer,
                                    std::string jsonPlan, GraphConfig gc) {
         executor.AggregationFunction(buffer, jsonPlan, gc);
+    };
+
+    methodMap["GroupBy"] = [](OperatorExecutor &executor, SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc)
+    {
+        executor.GroupBy(buffer, jsonPlan, gc);
     };
 
     methodMap["Create"] = [](OperatorExecutor &executor, SharedBuffer &buffer,
@@ -1375,6 +1382,134 @@ void OperatorExecutor::AggregationFunction(SharedBuffer &buffer, std::string jso
     }
 }
 
+void OperatorExecutor::GroupBy(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.debug("GroupBy: Parsing query plan");
+    json query = json::parse(jsonPlan);
+    SharedBuffer sharedBuffer(INTER_OPERATOR_BUFFER_SIZE);
+    std::string nextOpt = query["NextOperator"];
+    json next = json::parse(nextOpt);
+
+    std::string operatorName = next["Operator"];
+    execution_logger.debug("GroupBy: Next operator is " + operatorName);
+    auto method = OperatorExecutor::methodMap[operatorName];
+    execution_logger.debug("GroupBy: Launching next operator thread: " + operatorName);
+    std::thread result(method, std::ref(*this), std::ref(sharedBuffer), nextOpt, gc);
+
+    std::vector<std::pair<std::string, std::string>> groupByColumns;
+    execution_logger.debug("GroupBy: Extracting groupByColumns");
+    for (const auto &col : query["groupByColumns"]) {
+        groupByColumns.emplace_back(col["variable"], col["property"]);
+        execution_logger.debug("GroupBy: groupByColumn - variable: " + col["variable"].get<std::string>() + ", property: " + col["property"].get<std::string>());
+    }
+
+    std::vector<std::tuple<std::string, std::string, std::string>> aggregateColumns;
+    execution_logger.debug("GroupBy: Extracting aggregateColumns");
+    for (const auto &agg : query["aggregateColumns"]) {
+        std::string func = agg["functionName"];
+        std::string var = agg["variable"];
+        std::string prop = agg["property"];
+        aggregateColumns.emplace_back(func, var, prop);
+        execution_logger.debug("GroupBy: aggregateColumn - function: " + func + ", variable: " + var + ", property: " + prop);
+    }
+
+    std::unordered_map<std::string, std::vector<AggregationHelper*>> groupedHelpers;
+
+    execution_logger.debug("GroupBy: Starting to process rows from sharedBuffer");
+    int rowCount = 0;
+    while (true) {
+        std::string row = sharedBuffer.get();
+        if (row == "-1") {
+            execution_logger.debug("GroupBy: Received end signal from sharedBuffer");
+            break;
+        }
+
+        try {
+            json rowJson = json::parse(row);
+            execution_logger.debug("GroupBy: Processing row: " + row);
+
+            // === Build group key ===
+            std::ostringstream keyStream;
+            for (const auto &[var, prop] : groupByColumns) {
+                if (rowJson.contains(var) && rowJson[var].contains(prop)) {
+                    keyStream << rowJson[var][prop].get<std::string>() << "|";
+                    execution_logger.debug("GroupBy: group key part: " + rowJson[var][prop].get<std::string>());
+                } else {
+                    keyStream << "NULL|";
+                    execution_logger.debug("GroupBy: group key part: NULL (missing " + var + "." + prop + ")");
+                }
+            }
+            std::string groupKey = keyStream.str();
+            execution_logger.debug("GroupBy: Computed groupKey: " + groupKey);
+
+            // === Create aggregation helpers per group if not exists ===
+            if (groupedHelpers.find(groupKey) == groupedHelpers.end()) {
+                std::vector<AggregationHelper*> helpers;
+                for (const auto &[func, var, prop] : aggregateColumns) {
+                    execution_logger.debug("GroupBy: Creating AggregationHelper for function: " + func + ", variable: " + var + ", property: " + prop);
+                    helpers.push_back(AggregationHelperFactory::getAggregationMethod(func, var, prop));
+                }
+                groupedHelpers[groupKey] = helpers;
+                execution_logger.debug("GroupBy: Created new helpers for groupKey: " + groupKey);
+            }
+
+            // === Insert data into helpers ===
+            for (AggregationHelper* helper : groupedHelpers[groupKey]) {
+                execution_logger.debug("GroupBy: Inserting data into AggregationHelper for groupKey: " + groupKey);
+                helper->insertData(row);
+            }
+            rowCount++;
+        } catch (const std::exception& e) {
+            execution_logger.warn("GroupBy: Skipping malformed row. Exception: " + std::string(e.what()));
+        } catch (...) {
+            execution_logger.warn("GroupBy: Skipping malformed row. Unknown exception.");
+        }
+    }
+    execution_logger.debug("GroupBy: Finished processing " + std::to_string(rowCount) + " rows.");
+
+    // === Output final results ===
+    execution_logger.debug("GroupBy: Outputting final results for " + std::to_string(groupedHelpers.size()) + " groups.");
+    for (const auto &[groupKey, helpers] : groupedHelpers) {
+        json out;
+        std::istringstream keyStream(groupKey);
+        std::string token;
+        int i = 0;
+
+        // Split and assign group key values
+        while (std::getline(keyStream, token, '|') && i < groupByColumns.size()) {
+            out[groupByColumns[i].second] = token;
+            execution_logger.debug("GroupBy: Output group key [" + groupByColumns[i].second + "] = " + token);
+            i++;
+        }
+
+        // Add aggregated results
+        for (size_t j = 0; j < helpers.size(); ++j) {
+            std::string value = helpers[j]->getFinalResult();
+            const auto &[func, var, prop] = aggregateColumns[j];
+            std::string colName = func + "(" + (prop.empty() ? var : var + "." + prop) + ")";
+            out[colName] = value;
+            out["groupByKey"] = groupKey;  // Include group key in output
+            json aggregateColumns = json::array();
+            aggregateColumns.push_back({
+                {"functionName", func},
+                {"variable", colName},
+                {"property", prop}
+            });
+           out["variable"] = aggregateColumns;  // Include variable name in output
+            execution_logger.debug("GroupBy: Output aggregate [" + colName + "] = " + value);
+        }
+
+        buffer.add(out.dump());
+        execution_logger.debug("GroupBy: Added output row to buffer: " + out.dump());
+    }
+
+    buffer.add("-1");
+    execution_logger.debug("GroupBy: Added end signal to buffer. Joining thread.");
+    result.join();
+    execution_logger.debug("GroupBy: Thread joined. Exiting GroupBy.");
+}
+
+
+
 void OperatorExecutor::Projection(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
     execution_logger.debug("Projection: Parsing query plan");
     json query = json::parse(jsonPlan);
@@ -1419,8 +1554,21 @@ void OperatorExecutor::Projection(SharedBuffer &buffer, std::string jsonPlan, Gr
                     } else if (operand.contains("functionName") && key == operand["functionName"]) {
                         string assign = operand["assign"];
                         execution_logger.debug("Projection: Assigning function result '" + key + "' to '" + assign + "'");
-                        data["variable"] = assign;
+                        if (data["variable"].is_array()) {
+                            for ( auto& aggregateColumn : data["variable"])
+                            {
+                                if (aggregateColumn["variable"]== operand["functionName"])
+                                {
+                                    aggregateColumn["variable"] = assign;
+                                }
+                            }
+                        }else
+                        {
+                            data["variable"] = assign;
+                        }
                         data[assign] = value;
+
+
                     }
                 }
             }
