@@ -126,6 +126,7 @@ Operator* QueryPlanner::createExecutionPlan(ASTNode* ast, Operator* op, string v
             }
         }
     } else if (ast->nodeType == Const::DISTINCT) {
+
         // TODO(thamindumk): Implement DISTINCT
     } else if (ast->nodeType == Const::RETURN_BODY) {
         vector<ASTNode*> variables;
@@ -970,7 +971,7 @@ Operator* QueryPlanner::pathPatternHandler(ASTNode *pattern, Operator* inputOper
         } else {
             auto direction = e->elements[0]->elements[0]->nodeType == Const::LEFT_ARRROW ? "left" : "right";
             inputOperator = new DirectedRelationshipTypeScan(direction,
-                                                                 analyzedDetails.second[0]->elements[0]->value,
+                                                                 analyzedDetails.second[1]->elements[0]->value,
                                                                  relVar, startVar, destVar);
         }
 

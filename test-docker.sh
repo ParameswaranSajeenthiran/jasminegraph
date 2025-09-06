@@ -46,9 +46,9 @@ stop_and_remove_containers() {
 }
 
 build_and_run_docker() {
-    stop_and_remove_containers
+    #    stop_and_remove_containers
     cd "$PROJECT_ROOT"
-    docker build -t jasminegraph:test . |& tee "$BUILD_LOG"
+    docker build --build-arg DEBUG=true  -t jasminegraph:test . |& tee "$BUILD_LOG"
     build_status="${PIPESTATUS[0]}"
     if [ "$build_status" != '0' ]; then
         set +ex
@@ -132,19 +132,19 @@ wait_for_hadoop() {
     else
         echo "File already exists in HDFS at ${HDFS_FILE_PATH}. Skipping upload."
     fi
-
-    # uploading custom_graph_with_properties.txt
-    CUSTOM_GRAPH_FILE="custom_graph_with_properties.txt"
-    CUSTOM_GRAPH_LOCAL_PATH="${LOCAL_DIRECTORY}${CUSTOM_GRAPH_FILE}"
-    CUSTOM_GRAPH_HDFS_PATH="${HDFS_DIRECTORY}${CUSTOM_GRAPH_FILE}"
-    docker cp integration-jasminegraph-1:"${CUSTOM_GRAPH_LOCAL_PATH}" "${LOCAL_DIRECTORY}"
+    # upload graph with properties
+    FILE_NAME="graph_with_properties.txt"
+    LOCAL_FILE_PATH="${LOCAL_DIRECTORY}${FILE_NAME}"
+    HDFS_FILE_PATH="${HDFS_DIRECTORY}${FILE_NAME}"
+    docker cp integration-jasminegraph-1:"${LOCAL_FILE_PATH}" "${LOCAL_DIRECTORY}"
     docker exec -i hdfs-namenode hadoop fs -mkdir -p "${HDFS_DIRECTORY}"
-    docker cp "${CUSTOM_GRAPH_LOCAL_PATH}" hdfs-namenode:"${CUSTOM_GRAPH_HDFS_PATH}"
-    if ! docker exec -i hdfs-namenode hadoop fs -test -e "${CUSTOM_GRAPH_HDFS_PATH}"; then
-        docker exec -i hdfs-namenode hadoop fs -put "${CUSTOM_GRAPH_HDFS_PATH}" "${HDFS_DIRECTORY}"
-        echo "File: ${CUSTOM_GRAPH_LOCAL_PATH} successfully uploaded to HDFS."
+    docker cp "${LOCAL_FILE_PATH}" hdfs-namenode:"${HDFS_FILE_PATH}"
+    if ! docker exec -i hdfs-namenode hadoop fs -test -e "${HDFS_FILE_PATH}"; then
+        docker exec -i hdfs-namenode hadoop fs -put "${HDFS_FILE_PATH}" "${HDFS_DIRECTORY}"
+        echo "File: ${LOCAL_FILE_PATH} successfully uploaded to HDFS."
     else
-        echo "File already exists in HDFS at ${CUSTOM_GRAPH_HDFS_PATH}. Skipping upload."
+        echo "File already exists in HDFS at ${HDFS_FILE_PATH}. Skipping upload."
+
     fi
 
 }
@@ -192,7 +192,7 @@ while ! nc -zvn 127.0.0.1 7777 &>/dev/null; do
         echo -e '\n\e[33;1mMASTER LOG:\e[0m'
         cat "$RUN_LOG"
         force_remove "${TEST_ROOT}/env"
-        stop_and_remove_containers
+        #        stop_and_remove_containers
         exit 1
     fi
     sleep .5
@@ -259,8 +259,8 @@ if [ "$exit_code" != '0' ]; then
     done
 fi
 
-stop_and_remove_containers
-force_remove "${TEST_ROOT}/env" "${WORKER_LOG_DIR}"
+#stop_and_remove_containers
+#force_remove "${TEST_ROOT}/env" "${WORKER_LOG_DIR}"
 if [ "$exit_code" = '0' ]; then
     docker tag jasminegraph:test jasminegraph:latest
 fi

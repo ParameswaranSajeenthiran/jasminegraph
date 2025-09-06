@@ -90,23 +90,26 @@ void CypherQueryExecutor::execute() {
 
     const auto &workerList = JasmineGraphServer::getWorkers(numberOfPartitions);
 
-    std::vector<std::unique_ptr<SharedBuffer>> bufferPool;
-    bufferPool.reserve(numberOfPartitions);  // Pre-allocate space for pointers
-    for (size_t i = 0; i < numberOfPartitions; ++i) {
-        bufferPool.emplace_back(std::make_unique<SharedBuffer>(MASTER_BUFFER_SIZE));
-    }
+  std::vector<std::unique_ptr<SharedBuffer>> bufferPool;
+  bufferPool.reserve(numberOfPartitions);  // Pre-allocate space for pointers
+  for (size_t i = 0; i < numberOfPartitions; ++i) {
+      bufferPool.emplace_back(std::make_unique<SharedBuffer>(MASTER_BUFFER_SIZE));
+  }
 
-    std::vector<std::thread> workerThreads;
-    int count = 0;
-    for (auto worker : workerList) {
-        workerThreads.emplace_back(
-            doCypherQuery,
-            worker.hostname, worker.port,
-            masterIP, std::stoi(graphId), count,
-            queryPlan, std::ref(*bufferPool[count]));
-        count++;
-    }
+  cypher_logger.debug("Initialized bufferPool with " + std::to_string(numberOfPartitions) + " SharedBuffer objects");
 
+  std::vector<std::thread> workerThreads;
+  int count = 0;
+  for (auto worker : workerList) {
+      cypher_logger.debug("Spawning worker thread for host: " + worker.hostname + ", port: " + std::to_string(worker.port) +
+                          ", partition: " + std::to_string(count));
+      workerThreads.emplace_back(
+          doCypherQuery,
+          worker.hostname, worker.port,
+          masterIP, std::stoi(graphId), count,
+          queryPlan, std::ref(*bufferPool[count]));
+      count++;
+  }
     PerformanceUtil::init();
 
     std::string query =
@@ -260,32 +263,45 @@ void CypherQueryExecutor::execute() {
         Operator::isAggregate = false;
     } else {
         int count = 0;
-        while (true) {
-            if (closeFlag == numberOfPartitions) {
-                break;
-            }
-            for (size_t i = 0; i < bufferPool.size(); ++i) {
-                std::string data;
-                if (bufferPool[i]->tryGet(data)) {
-                    if (data == "-1") {
-                        closeFlag++;
-                    } else {
-                        count++;
-                        result_wr = write(connFd, data.c_str(), data.length());
-                        result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
-                                          Conts::CARRIAGE_RETURN_NEW_LINE.size());
-                        if (result_wr < 0) {
-                            cypher_logger.error("Error writing to socket");
-                            *loop_exit = true;
-                            return;
-                        }
-                    }
-                }
-            }
-        }
-        cypher_logger.info("Total records returned: " + std::to_string(count));
-    }
 
+auto partitionWriter = [&](SharedBuffer* buf) {
+    auto startTime = std::chrono::high_resolution_clock::now();
+    int localCount = 0;
+
+    while (true) {
+        std::string data = buf->get(); // blocking
+        if (data == "-1") {
+            break; // partition finished
+        }
+        result_wr = write(connFd, data.c_str(), data.length());
+        result_wr = write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(),
+                          Conts::CARRIAGE_RETURN_NEW_LINE.size());
+        if (result_wr < 0) {
+            cypher_logger.error("Error writing to socket");
+            *loop_exit = true;
+            return;
+        }
+        localCount++;
+    }
+    auto endTime = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
+    cypher_logger.info("Partition writer finished in " + std::to_string(duration) + " ms, records: " + std::to_string(localCount));
+};
+
+std::vector<std::thread> threads;
+threads.reserve(bufferPool.size());
+
+for (auto& buf : bufferPool) {
+    threads.emplace_back(partitionWriter, buf.get());
+}
+
+// Join all threads
+for (auto& t : threads) {
+    if (t.joinable()) t.join();
+}
+
+cypher_logger.info("Total records returned: " + std::to_string(count));
+}
     for (auto& thread : workerThreads) {
         if (thread.joinable()) {
             thread.join();

@@ -16,6 +16,7 @@ limitations under the License.
 #include <memory>
 #include <stdexcept>
 
+#include "../../nativestore/LabelIndexManager.h"
 #include "../../nativestore/RelationBlock.h"
 #include "../../util/logger/Logger.h"
 #include "../../util/Utils.h"
@@ -30,6 +31,9 @@ JasmineGraphIncrementalLocalStore::JasmineGraphIncrementalLocalStore(unsigned in
     gc.maxLabelSize = std::stoi(Utils::getJasmineGraphProperty("org.jasminegraph.nativestore.max.label.size"));
     gc.openMode = openMode;
     this->nm = new NodeManager(gc);
+    this->nodeLabelIndexManager = new LabelIndexManager(nm->getDbPrefix() + "_node", nm->getDbPrefix() + "_node");
+    this->localRelationLabelIndexManager = new LabelIndexManager(nm->getDbPrefix() + "_local_relation",nm->getDbPrefix() + "_local_relation");
+    this->centralRelationLabelIndexManager = new LabelIndexManager(nm->getDbPrefix() + "_central_relation", nm->getDbPrefix() + "_central_relation");
 };
 
 std::pair<std::string, unsigned int> JasmineGraphIncrementalLocalStore::getIDs(std::string edgeString) {
@@ -103,7 +107,7 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromString(std::string edgeString
         }
 
         addSourceProperties(newRelation, sourceJson);
-        addDestinationProperties(newRelation, destinationJson);
+        addDestinationProperties(newRelation, destinationJson, !isLocal);
         incremental_localstore_logger.debug("Edge (" + sId + ", " + dId + ") Added successfully!");
     } catch (const std::exception&) {  // TODO tmkasun: Handle multiple types of exceptions
         incremental_localstore_logger.log(
@@ -132,7 +136,10 @@ void JasmineGraphIncrementalLocalStore::addLocalEdge(std::string edge) {
 
     addLocalEdgeProperties(newRelation, jsonEdge);
     addSourceProperties(newRelation, jsonSource);
-    addDestinationProperties(newRelation, jsonDestination);
+    addDestinationProperties(newRelation, jsonDestination, false);
+    delete newRelation->getSource();
+    delete newRelation->getDestination();
+    delete newRelation;
 
     incremental_localstore_logger.debug("Local edge (" + sId + "-> " + dId + " ) added successfully");
 }
@@ -154,27 +161,35 @@ void JasmineGraphIncrementalLocalStore::addCentralEdge(std::string edge) {
 
     addCentralEdgeProperties(newRelation, jsonEdge);
     addSourceProperties(newRelation, jsonSource);
-    addDestinationProperties(newRelation, jsonDestination);
-
+    addDestinationProperties(newRelation, jsonDestination, true);
+    delete newRelation->getSource();
+    delete newRelation->getDestination();
+    delete newRelation;
     incremental_localstore_logger.debug("Central edge (" + sId + "-> " + dId + " ) added successfully");
 }
 
 void JasmineGraphIncrementalLocalStore::addCentralEdgeProperties(RelationBlock* relationBlock, const json& edgeJson) {
+    incremental_localstore_logger.debug("Entering addCentralEdgeProperties");
     char value[PropertyLink::MAX_VALUE_SIZE] = {};
     char type[RelationBlock::MAX_TYPE_SIZE] = {0};
     if (edgeJson.contains("properties")) {
         auto edgeProperties = edgeJson["properties"];
         for (auto it = edgeProperties.begin(); it != edgeProperties.end(); it++) {
             strcpy(value, it.value().get<std::string>().c_str());
+            incremental_localstore_logger.debug("Processing property key: " + std::string(it.key()) + ", value: " + std::string(value));
             if (std::string(it.key()) == "type") {
                 strcpy(type, it.value().get<std::string>().c_str());
-                relationBlock->addCentralRelationshipType(&type[0]);
+                size_t edgeIndex = relationBlock->addr / RelationBlock::CENTRAL_BLOCK_SIZE;
+                incremental_localstore_logger.debug("Setting central relationship type: " + std::string(type) + " at edgeIndex: " + std::to_string(edgeIndex));
+                relationBlock->addCentralRelationshipType(&type[0], centralRelationLabelIndexManager, edgeIndex);
             }
             relationBlock->addCentralProperty(std::string(it.key()), &value[0]);
         }
     }
     std::string edgePid = std::to_string(edgeJson["source"]["pid"].get<int>());
+    incremental_localstore_logger.debug("Adding relation meta property PARTITION_ID: " + edgePid);
     addRelationMetaProperty(relationBlock, MetaPropertyEdgeLink::PARTITION_ID, edgePid);
+    incremental_localstore_logger.debug("Exiting addCentralEdgeProperties");
 }
 
 void JasmineGraphIncrementalLocalStore::addLocalEdgeProperties(RelationBlock* relationBlock, const json& edgeJson) {
@@ -186,7 +201,10 @@ void JasmineGraphIncrementalLocalStore::addLocalEdgeProperties(RelationBlock* re
             strcpy(value, it.value().get<std::string>().c_str());
             if (std::string(it.key()) == "type") {
                 strcpy(type, it.value().get<std::string>().c_str());
-                relationBlock->addLocalRelationshipType(&type[0]);
+                // extract the index by dividing the address by the block size
+
+                size_t edgeIndex = relationBlock->addr / RelationBlock::BLOCK_SIZE;
+                relationBlock->addLocalRelationshipType(&type[0], localRelationLabelIndexManager, edgeIndex);
             }
             relationBlock->addLocalProperty(std::string(it.key()), &value[0]);
         }
@@ -202,7 +220,11 @@ void JasmineGraphIncrementalLocalStore::addSourceProperties(RelationBlock* relat
             strcpy(value, it.value().get<std::string>().c_str());
             if (std::string(it.key()) == "label") {
                 strcpy(label, it.value().get<std::string>().c_str());
-                relationBlock->getSource()->addLabel(&label[0]);
+
+                std:string sourceNodeId = relationBlock->getSource()->id;
+                size_t nodeIndex = nm->nodeIndex.find(sourceNodeId)->second;
+                relationBlock->getSource()->addLabel(&label[0],nodeLabelIndexManager,nodeIndex, false);
+
             }
             relationBlock->getSource()->addProperty(std::string(it.key()), &value[0]);
         }
@@ -213,7 +235,7 @@ void JasmineGraphIncrementalLocalStore::addSourceProperties(RelationBlock* relat
 }
 
 void JasmineGraphIncrementalLocalStore::addDestinationProperties(RelationBlock* relationBlock,
-    const json& destinationJson) {
+    const json& destinationJson ,  bool isCentralEdgeDestinationNode) {
     char value[PropertyLink::MAX_VALUE_SIZE] = {};
     char label[NodeBlock::LABEL_SIZE] = {0};
     if (destinationJson.contains("properties")) {
@@ -222,7 +244,10 @@ void JasmineGraphIncrementalLocalStore::addDestinationProperties(RelationBlock* 
             strcpy(value, it.value().get<std::string>().c_str());
             if (std::string(it.key()) == "label") {
                 strcpy(label, it.value().get<std::string>().c_str());
-                relationBlock->getDestination()->addLabel(&label[0]);
+                std::string destinationNodeId = relationBlock->getDestination()->id;
+                size_t nodeIndex = nm->nodeIndex.find(destinationNodeId)->second;
+                relationBlock->getDestination()->addLabel(&label[0], nodeLabelIndexManager, nodeIndex ,
+                    isCentralEdgeDestinationNode);
             }
             relationBlock->getDestination()->addProperty(std::string(it.key()), &value[0]);
         }

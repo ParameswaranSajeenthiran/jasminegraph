@@ -422,7 +422,7 @@ RelationBlock* RelationBlock::getCentralRelation(unsigned int address) {
     if (!RelationBlock::centralRelationsDB->read(reinterpret_cast<char*>(&source.nodeId),
                                           RECORD_SIZE)) {  // < ------ relation data offset ID = 0
         relation_block_logger.error(
-                "Error while reading local relation source node address offset ID = 0 from "
+                "Error while reading central relation source node address offset ID = 0 from "
                 "relation block address " +
                 std::to_string(address));
         return NULL;
@@ -431,7 +431,7 @@ RelationBlock* RelationBlock::getCentralRelation(unsigned int address) {
     if (!RelationBlock::centralRelationsDB->read(reinterpret_cast<char*>(&destination.nodeId),
                                           RECORD_SIZE)) {  // < ------ relation data offset ID = 1
         relation_block_logger.error(
-                "Error while reading local relation source node address offset ID = 0 from "
+                "Error while reading central relation source node address offset ID = 0 from "
                 "relation block address " +
                 std::to_string(address));
         return NULL;
@@ -440,7 +440,7 @@ RelationBlock* RelationBlock::getCentralRelation(unsigned int address) {
     if (!RelationBlock::centralRelationsDB->read(reinterpret_cast<char*>(&source.address),
                                           RECORD_SIZE)) {  // < ------ relation data offset ID = 2
         relation_block_logger.error(
-                "Error while reading local relation source node address offset ID = 0 from "
+                "Error while reading central relation source node address offset ID = 0 from "
                 "relation block address " +
                 std::to_string(address));
         return NULL;
@@ -753,12 +753,15 @@ void RelationBlock::addLocalProperty(std::string name, char* value) {
             // If it was an empty prop link before inserting, Then update the property reference of this node
             // block
             this->updateLocalRelationRecords(RelationOffsets::RELATION_PROPS, this->propertyAddress);
+            delete newLink; // Free the allocated PropertyEdgeLink to prevent memory leak
         } else {
             relation_block_logger.error("Error occurred while adding a new property link to " +
                     std::to_string(this->addr) + " node block");
         }
     } else {
-        this->propertyAddress = this->getPropertyHead()->insert(name, value);
+    PropertyEdgeLink* propHead = this->getPropertyHead();
+    this->propertyAddress = propHead->insert(name, value);
+    delete propHead; // Free the allocated PropertyEdgeLink to prevent memory leak
     }
 }
 void RelationBlock::addCentralProperty(std::string name, char* value) {
@@ -769,12 +772,16 @@ void RelationBlock::addCentralProperty(std::string name, char* value) {
             // If it was an empty prop link before inserting, Then update the property reference of this node
             // block
             this->updateCentralRelationRecords(RelationOffsets::RELATION_PROPS, this->propertyAddress);
+            delete newLink;
         } else {
             relation_block_logger.error("Error occurred while adding a new property link to " +
                     std::to_string(this->addr) + " node block");
         }
     } else {
-        this->propertyAddress = this->getPropertyHead()->insert(name, value);
+       PropertyEdgeLink* propHead = this->getPropertyHead();
+       unsigned int newPropAddr = propHead->insert(name, value);
+       delete propHead; // Free the allocated PropertyEdgeLink
+       this->propertyAddress = newPropAddr;;
     }
 }
 
@@ -787,28 +794,36 @@ void RelationBlock::addMetaProperty(std::string name, char *value) {
             // block
             this->updateCentralRelationRecords(RelationOffsets::RELATION_PROPS_META,
                                                this->metaPropertyAddress);
+            delete newLink; // Free the allocated MetaPropertyEdgeLink
         } else {
             relation_block_logger.error("Error occurred while adding a new property link to " +
                                         std::to_string(this->addr) + " node block");
         }
     } else {
-        this->metaPropertyAddress = this->getMetaPropertyHead()->insert(name, value);
+      MetaPropertyEdgeLink* metaPropHead = this->getMetaPropertyHead();
+      this->metaPropertyAddress = metaPropHead->insert(name, value);
+      delete metaPropHead; // Free the allocated MetaPropertyEdgeLink
     }
 }
 
-void RelationBlock::addLocalRelationshipType(char *value) {
+void RelationBlock::addLocalRelationshipType(char *value, LabelIndexManager* labelIndexManager, size_t edgeIndex) {
+    relation_block_logger.debug("Attempting to add local relationship type: " + std::string(value) +
+                               " at address " + std::to_string(this->addr));
     if (this->type == DEFAULT_TYPE) {
-        this->updateLocalRelationshipType(RelationBlock::LOCAL_RELATIONSHIP_TYPE_OFFSET,
-                                               value);
+        relation_block_logger.debug("Current type is DEFAULT_TYPE, updating to: " + std::string(value));
+        this->updateLocalRelationshipType(RelationBlock::LOCAL_RELATIONSHIP_TYPE_OFFSET, value);
+        labelIndexManager->setLabel(labelIndexManager->getOrCreateLabelID(value),  edgeIndex);
+
     } else {
         relation_block_logger.info("Relation type is already set to " + this->type);
     }
 }
 
-void RelationBlock::addCentralRelationshipType(char *value) {
+void RelationBlock::addCentralRelationshipType(char *value , LabelIndexManager* labelIndexManager, size_t edgeIndex) {
     if (this->type == DEFAULT_TYPE) {
         this->updateCentralRelationshipType(RelationBlock::CENTRAL_RELATIONSHIP_TYPE_OFFSET,
                                           value);
+        labelIndexManager->setLabel(labelIndexManager->getOrCreateLabelID(value),  edgeIndex);
     } else {
         relation_block_logger.info("Relation type is already set to " + this->type);
     }

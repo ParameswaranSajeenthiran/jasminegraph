@@ -157,7 +157,7 @@ void HDFSMultiThreadedHashPartitioner::consumeLocalEdges(int partitionIndex, Jas
                                              JasmineGraphInstanceProtocol::HDFS_LOCAL_STREAM_START);
                 partitionMutexArray[partitionIndex].unlock();
 
-                hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) +
+                hash_partitioner_logger.info("Local edge consumer " + std::to_string(partitionIndex) +
                                               " generated file of " +
                                               std::to_string(PARTITION_FILE_EDGE_COUNT_THRESHOLD) +
                                               " edges: " + filePath);

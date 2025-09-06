@@ -40,9 +40,9 @@ PropertyLink::PropertyLink(unsigned int propertyBlockAddress) : blockAddress(pro
             property_link_logger.error("Error while reading node property name from block " +
                                        std::to_string(blockAddress));
         }
-        property_link_logger.debug(
-            "Current file descriptor curser position = " + std::to_string(this->propertiesDB->tellg()) +
-            " when reading = " + std::to_string(blockAddress));
+        // property_link_logger.debug(
+        //     "Current file descriptor curser position = " + std::to_string(this->propertiesDB->tellg()) +
+        //     " when reading = " + std::to_string(blockAddress));
         if (!this->propertiesDB->read(reinterpret_cast<char*>(&this->value), PropertyLink::MAX_VALUE_SIZE)) {
             property_link_logger.error("Error while reading node property value from block " +
                                        std::to_string(blockAddress));
@@ -126,7 +126,10 @@ unsigned int PropertyLink::insert(std::string name, const char* value) {
         property_link_logger.debug("Property key/name already exist key = " + std::string(name));
         return this->blockAddress;
     } else if (this->nextPropAddress) {  // Traverse to the edge/end of the link list
-        return this->next()->insert(name, value);
+        PropertyLink* nextLink = this->next();
+        unsigned int result = nextLink->insert(name, value);
+        delete nextLink;
+        return result;
     } else {  // No next link means end of the link, Now add the new link
         //        property_link_logger.debug("Next prop index = " + std::to_string(PropertyLink::nextPropertyIndex));
 
