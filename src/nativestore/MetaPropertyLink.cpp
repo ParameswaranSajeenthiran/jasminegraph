@@ -24,7 +24,7 @@ pthread_mutex_t lockGetMetaPropertyLink;
 
 MetaPropertyLink::MetaPropertyLink(unsigned int propertyBlockAddress) : blockAddress(propertyBlockAddress) {
     pthread_mutex_lock(&lockMetaPropertyLink);
-    if (propertyBlockAddress > 0) {
+    if (propertyBlockAddress >= 0) {
         MetaPropertyLink::metaPropertiesDB->seekg(propertyBlockAddress);
         char rawName[MetaPropertyLink::MAX_NAME_SIZE] = {0};
 
@@ -135,7 +135,7 @@ MetaPropertyLink* MetaPropertyLink::get(unsigned int propertyBlockAddress) {
     MetaPropertyLink* pl = nullptr;
 
     pthread_mutex_lock(&lockGetMetaPropertyLink);
-    if (propertyBlockAddress > 0) {
+    if (propertyBlockAddress >= 0) {
         char propertyName[MetaPropertyLink::MAX_NAME_SIZE] = {0};
         char propertyValue[MetaPropertyLink::MAX_VALUE_SIZE] = {0};
         unsigned int nextAddress;
