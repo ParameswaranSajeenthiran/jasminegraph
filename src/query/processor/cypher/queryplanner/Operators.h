@@ -131,6 +131,25 @@ class ExpandAll : public Operator {
     string direction;
 };
 
+// ExpandAll Operator
+class VarLengthExpandAll : public Operator {
+public:
+   VarLengthExpandAll(Operator* input, string startVar, string destVar, string relVar,
+               string relType = "null", string direction = "" , string minHops = "1", string maxHops = "1");
+   string execute() override;
+
+private:
+   Operator* input;
+   string startVar;
+   string destVar;
+   string relVar;
+   string relType;
+   string direction;
+   string minHops;
+   string maxHops;
+};
+
+
 
 // Limit Operator
 class Limit : public Operator {
@@ -257,6 +276,7 @@ class DirectedRelationshipTypeScan : public Operator {
     string endVar;   // Variable name for the end node
     string relvar;
 };
+
 
 class Apply : public Operator {
  public:

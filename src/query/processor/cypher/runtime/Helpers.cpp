@@ -35,9 +35,11 @@ bool FilterHelper::evaluateCondition(std::string condition, std::string data) {
 }
 
 bool FilterHelper::evaluateComparison(std::string condition, std::string raw) {
+    std::cout << "[INFO] Evaluating comparison with condition: " << condition << " and data: " << raw << std::endl;
     json predicate = json::parse(condition);
     json data = json::parse(raw);
     if (!typeCheck(predicate["left"]["type"], predicate["right"]["type"])) {
+        std::cout << "[INFO] Type check failed for left type: " << predicate["left"]["type"] << " and right type: " << predicate["right"]["type"] << std::endl;
         return false;
     }
 
@@ -47,37 +49,45 @@ bool FilterHelper::evaluateComparison(std::string condition, std::string raw) {
     if (predicate["left"]["type"] == "VARIABLE" && predicate["right"]["type"] == "VARIABLE") {
         string left = predicate["left"]["value"];
         string right = predicate["right"]["value"];
+        std::cout << "[INFO] Both sides are VARIABLE: left=" << left << ", right=" << right << std::endl;
         return evaluateNodes(data[left].dump(),
                              data[right].dump());
     }
 
     if (predicate["left"]["type"] == "PROPERTY_LOOKUP") {
         std::string variable = predicate["left"]["variable"];
+        std::cout << "[INFO] Left side is PROPERTY_LOOKUP, variable: " << variable << std::endl;
         leftValue = evaluatePropertyLookup(predicate["left"].dump(),
                                            data[variable].dump(), predicate["right"]["type"]);
     } else if (predicate["left"]["type"] == Const::FUNCTION) {
+        std::cout << "[INFO] Left side is FUNCTION" << std::endl;
         leftValue = evaluateFunction(predicate["left"].dump(),
                                      data.dump(), predicate["right"]["type"]);
     } else {
+        std::cout << "[INFO] Left side is other type: " << predicate["left"]["type"] << std::endl;
         //  only evaluating string, decimal, boolean, null for now
         leftValue = evaluateOtherTypes(predicate["left"].dump());
     }
 
     if (predicate["right"]["type"] == "PROPERTY_LOOKUP") {
         std::string variable = predicate["right"]["variable"];
+        std::cout << "[INFO] Right side is PROPERTY_LOOKUP, variable: " << variable << std::endl;
         rightValue = evaluatePropertyLookup(predicate["right"].dump(),
                                             data[variable].dump(), predicate["left"]["type"]);
 
     } else if (predicate["right"]["type"] == Const::FUNCTION) {
+        std::cout << "[INFO] Right side is FUNCTION" << std::endl;
         rightValue = evaluateFunction(predicate["right"].dump(),
                                       data.dump(), predicate["left"]["type"]);
     } else {
+        std::cout << "[INFO] Right side is other type: " << predicate["right"]["type"] << std::endl;
         //  only evaluating string, decimal, boolean, null for now
         rightValue = evaluateOtherTypes(predicate["right"].dump());
     }
     string op = predicate["operator"];
+    std::cout << "[INFO] Operator: " << op << std::endl;
 
-    return std::visit([&op](auto&& lhs, auto&& rhs) -> bool {
+    bool result = std::visit([&op](auto&& lhs, auto&& rhs) -> bool {
         using LType = std::decay_t<decltype(lhs)>;
         using RType = std::decay_t<decltype(rhs)>;
 
@@ -93,7 +103,9 @@ bool FilterHelper::evaluateComparison(std::string condition, std::string raw) {
         }
         return false;  // Default if types are incompatible
     }, leftValue, rightValue);
-    return false;
+
+    std::cout << "[INFO] Comparison result: " << result << std::endl;
+    return result;
 }
 
 bool FilterHelper::evaluatePredicateExpression(std::string condition, std::string raw) {
@@ -186,15 +198,19 @@ bool FilterHelper::evaluateLogical(std::string condition, std::string data) {
 }
 
 bool FilterHelper::evaluateNodes(std::string left, std::string right) {
+    std::cout << "[DEBUG] evaluateNodes: left=" << left << ", right=" << right << std::endl;
     json leftNode = json::parse(left);
     json rightNode = json::parse(right);
     if (left == "null" || right == "null") {
+        std::cout << "[DEBUG] One or both nodes are null. Returning true." << std::endl;
         return true;
     }
 
     if (leftNode["id"] != rightNode["id"]) {
+        std::cout << "[DEBUG] Node IDs are different: leftNode[id]=" << leftNode["id"] << ", rightNode[id]=" << rightNode["id"] << ". Returning true." << std::endl;
         return true;
     }
+    std::cout << "[DEBUG] Node IDs are equal: leftNode[id]=" << leftNode["id"] << ", rightNode[id]=" << rightNode["id"] << ". Returning false." << std::endl;
     return false;
 }
 
@@ -212,6 +228,7 @@ bool FilterHelper::typeCheck(std::string left, std::string right) {
 }
 
 ValueType FilterHelper::evaluatePropertyLookup(std::string property, std::string data, string type) {
+    std::cout << "[DEBUG] evaluatePropertyLookup: property=" << property << ", data=" << data << ", type=" << type << std::endl;
     json prop = json::parse(property);
     json raw = json::parse(data);
     vector<string> properties = prop["property"];
@@ -219,36 +236,55 @@ ValueType FilterHelper::evaluatePropertyLookup(std::string property, std::string
     // should be implemented to lookup nested properties after persisting that kind of properties
     // for now only one level of properties are supported (size of properties vector should be 1)
     for (auto p : properties) {
+        std::cout << "[DEBUG] Checking property: " << p << std::endl;
         if (!raw.contains(p)) {
+            std::cout << "[DEBUG] Property not found: " << p << std::endl;
             value = "null";
         } else {
             value = raw[p];
+            std::cout << "[DEBUG] Property found: " << p << ", value=" << value << std::endl;
         }
     }
 
     try {
         if (type == "STRING") {
+            std::cout << "[DEBUG] Returning STRING value: " << value << std::endl;
             return value;
         } else if (type == "DECIMAL") {
             size_t pos;
             int num = stoi(value, &pos);
             if (pos != value.size()) throw invalid_argument("Invalid number format");
+            std::cout << "[DEBUG] Returning DECIMAL value: " << num << std::endl;
             return num;
         } else if (type == "BOOLEAN") {
             string lowerValue;
             std::transform(value.begin(), value.end(), back_inserter(lowerValue), ::tolower);
-            if (lowerValue == "true") return true;
-            if (lowerValue == "false") return false;
+            std::cout << "[DEBUG] BOOLEAN value (lower): " << lowerValue << std::endl;
+            if (lowerValue == "true") {
+                std::cout << "[DEBUG] Returning BOOLEAN true" << std::endl;
+                return true;
+            }
+            if (lowerValue == "false") {
+                std::cout << "[DEBUG] Returning BOOLEAN false" << std::endl;
+                return false;
+            }
             throw invalid_argument("Invalid boolean format");
         } else if (type == "NULL") {
-            if (value == "null") return "null";
+            if (value == "null") {
+                std::cout << "[DEBUG] Returning NULL value: null" << std::endl;
+                return "null";
+            }
+            std::cout << "[DEBUG] Returning NULL value: " << value << std::endl;
             return value;
         } else if ("PROPERTY_LOOKUP") {
+            std::cout << "[DEBUG] Returning PROPERTY_LOOKUP value: " << value << std::endl;
             return value;
         }
     } catch (const exception& e) {
+        std::cout << "[DEBUG] Exception in evaluatePropertyLookup: " << e.what() << std::endl;
         return "null";
     }
+    std::cout << "[DEBUG] Returning default null" << std::endl;
     return "null";
 }
 
@@ -328,7 +364,8 @@ string ExpandAllHelper::generateSubQueryPlan(std::string query) {
     return obj;
 }
 
-string ExpandAllHelper::generateSubQuery(std::string startVar, std::string destVar, string relVar, bool isDirected,
+string ExpandAllHelper::generateSubQuery(std::string startVar, std::string destVar, string relVar, bool isDirected, bool
+    isRightDirected,
                                          std::string id, std::string relType) {
     if (relType == "") {
         if (isDirected) {
@@ -339,12 +376,50 @@ string ExpandAllHelper::generateSubQuery(std::string startVar, std::string destV
                 + startVar + ") = " + id + " return " + relVar + "," + destVar;
     }
     if (isDirected) {
+        if (!isRightDirected)
+        {
+            return "match (" + destVar + ")-[" + relVar + ":" + relType + "]->(" + startVar + ") where id("
+               + startVar + ") = " + id + " return " + relVar + "," + destVar;
+        }
         return "match (" + startVar + ")-[" + relVar + ":" + relType + "]->(" + destVar + ") where id("
                + startVar + ") = " + id + " return " + relVar + "," + destVar;
     }
     return "match (" + startVar + ")-[" + relVar + ":" + relType + "]-(" + destVar + ") where id("
             + startVar + ") = " + id + " return " + relVar + "," + destVar;
 }
+
+string ExpandAllHelper::generateVarLengthSubQuery(std::string startVar, std::string destVar,
+                                                  std::string relVar, int minHops, int maxHops,
+                                                  bool isDirected, bool isRightDirected,
+                                                  std::string id, std::string relType) {
+    std::string range = (minHops == maxHops)
+        ? "*" + std::to_string(minHops)
+        : "*" + std::to_string(minHops) + ".." + std::to_string(maxHops);
+
+    // Build relationship pattern
+    std::string relPattern = "[" + relVar;
+    if (!relType.empty()) {
+        relPattern += ":" + relType;
+    }
+    relPattern += range + "]";
+
+    // Directed/Undirected pattern
+    std::string pattern;
+    if (isDirected) {
+        if (isRightDirected) {
+            pattern = "(" + startVar + ")-" + relPattern + "->(" + destVar + ")";
+        } else {
+            pattern = "(" + destVar + ")-" + relPattern + "->(" + startVar + ")";
+        }
+    } else {
+        pattern = "(" + startVar + ")-" + relPattern + "-(" + destVar + ")";
+    }
+
+    // Construct query
+    return "MATCH " + pattern + " WHERE id(" + startVar + ") = " + id +
+           " RETURN " + relVar + "," + destVar;
+}
+
 
 void AverageAggregationHelper::insertData(std::string data) {
     json rawObj = json::parse(data);

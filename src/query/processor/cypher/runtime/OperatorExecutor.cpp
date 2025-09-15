@@ -47,6 +47,10 @@ void OperatorExecutor::initializeMethodMap() {
             std::string jsonPlan, GraphConfig gc) {
         executor.ExpandAll(buffer, jsonPlan, gc);
     };
+    methodMap["VarLengthExpandAll"] = [](OperatorExecutor &executor, SharedBuffer &buffer,
+            std::string jsonPlan, GraphConfig gc) {
+        executor.VarLengthExpandAll(buffer, jsonPlan, gc);
+    };
 
     methodMap["UndirectedRelationshipTypeScan"] = [](OperatorExecutor &executor, SharedBuffer &buffer,
             std::string jsonPlan, GraphConfig gc) {
@@ -165,17 +169,21 @@ void OperatorExecutor::NodeScanByLabel(SharedBuffer &buffer, std::string jsonPla
 }
 
 void OperatorExecutor::ProduceResult(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.debug("ProduceResult: Parsing query plan");
     json query = json::parse(jsonPlan);
     SharedBuffer sharedBuffer(INTER_OPERATOR_BUFFER_SIZE);
     std::string nextOpt = query["NextOperator"];
+    execution_logger.debug("ProduceResult: NextOperator = " + nextOpt);
     json next = json::parse(nextOpt);
     auto method = OperatorExecutor::methodMap[next["Operator"]];
+    execution_logger.debug("ProduceResult: Launching next operator thread: " + next["Operator"].get<std::string>());
     // Launch the method in a new thread
     std::thread result(method, std::ref(*this), std::ref(sharedBuffer), query["NextOperator"], gc);
 
     while (true) {
         string raw = sharedBuffer.get();
         if (raw == "-1") {
+            execution_logger.debug("ProduceResult: Received end signal from sharedBuffer");
             buffer.add(raw);
             result.join();
             break;
@@ -186,6 +194,7 @@ void OperatorExecutor::ProduceResult(SharedBuffer &buffer, std::string jsonPlan,
         for (auto value : values) {
             data[value] = rawObj[value];
         }
+        execution_logger.debug("ProduceResult: Adding result to buffer: " + data.dump());
         buffer.add(data.dump());
     }
 }
@@ -508,6 +517,7 @@ void OperatorExecutor::UndirectedAllRelationshipScan(SharedBuffer &buffer, std::
 }
 
 void OperatorExecutor::DirectedRelationshipTypeScan(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.info("DirectedRelationshipTypeScan: Start processing local relations");
     json query = json::parse(jsonPlan);
     NodeManager nodeManager(gc);
     string direction = query["direction"];
@@ -572,15 +582,17 @@ void OperatorExecutor::DirectedRelationshipTypeScan(SharedBuffer &buffer, std::s
         if (isDirectionRight) {
             directionData[start] = startNodeData;
             directionData[dest] = destNodeData;
-        } else if (!isDirected) {
+        } else {
             directionData[start] = destNodeData;
             directionData[dest] = startNodeData;
         }
         directionData[rel] = relationData;
         buffer.add(directionData.dump());
+        execution_logger.info("DirectedRelationshipTypeScan: Added local relation " + std::to_string(i));
         count++;
     }
 
+    execution_logger.info("DirectedRelationshipTypeScan: Start processing central relations");
     int central = 1;
     for (long i = 1; i < centralRelationCount; i++) {
         json startNodeData;
@@ -638,16 +650,18 @@ void OperatorExecutor::DirectedRelationshipTypeScan(SharedBuffer &buffer, std::s
         if (isDirectionRight) {
             directionData[start] = startNodeData;
             directionData[dest] = destNodeData;
-        } else if (!isDirected) {
+        } else {
             directionData[start] = destNodeData;
             directionData[dest] = startNodeData;
         }
         directionData[rel] = relationData;
         buffer.add(directionData.dump());
+        execution_logger.info("DirectedRelationshipTypeScan: Added central relation " + std::to_string(i));
 
         central++;
     }
     buffer.add("-1");
+    execution_logger.info("DirectedRelationshipTypeScan: Finished processing");
 }
 
 void OperatorExecutor::DirectedAllRelationshipScan(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
@@ -809,11 +823,13 @@ void OperatorExecutor::NodeByIdSeek(SharedBuffer &buffer, std::string jsonPlan, 
 }
 
 void OperatorExecutor::ExpandAll(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.debug("ExpandAll: Parsing query plan");
     json query = json::parse(jsonPlan);
     SharedBuffer sharedBuffer(INTER_OPERATOR_BUFFER_SIZE);
     std::string nextOpt = query["NextOperator"];
     json next = json::parse(nextOpt);
     auto method = OperatorExecutor::methodMap[next["Operator"]];
+    execution_logger.debug("ExpandAll: Launching next operator thread: " + next["Operator"].get<std::string>());
     // Launch the method in a new thread
     std::thread result(method, std::ref(*this), std::ref(sharedBuffer), query["NextOperator"], gc);
 
@@ -824,15 +840,18 @@ void OperatorExecutor::ExpandAll(SharedBuffer &buffer, std::string jsonPlan, Gra
     string relType = "";
     if (query.contains("relType")) {
         relType = query["relType"];
+        execution_logger.debug("ExpandAll: relType found: " + relType);
     }
     string graphDirection = Utils::getGraphDirection(to_string(gc.graphID), masterIP);
     bool isDirected = false;
     if (graphDirection == "TRUE") {
         isDirected = true;
     }
+    execution_logger.debug("ExpandAll: graphDirection = " + graphDirection + ", isDirected = " + std::to_string(isDirected));
     bool isDirectionRight = false;
     if (query.contains("direction")) {
         isDirectionRight = query["direction"] == "right";
+        execution_logger.debug("ExpandAll: direction found: " + query["direction"].get<std::string>());
     }
 
     string queryString;
@@ -842,67 +861,99 @@ void OperatorExecutor::ExpandAll(SharedBuffer &buffer, std::string jsonPlan, Gra
     while (true) {
         string raw = sharedBuffer.get();
         if (raw == "-1") {
+            execution_logger.debug("ExpandAll: Received end signal from sharedBuffer");
             buffer.add(raw);
             result.join();
             break;
         }
+        execution_logger.debug("ExpandAll: Processing input row: " + raw);
         json rawObj = json::parse(raw);
         string nodeId = rawObj[sourceVariable]["id"];
+        execution_logger.debug("ExpandAll: nodeId = " + nodeId + ", partitionID = " + rawObj[sourceVariable]["partitionID"].get<std::string>());
         if (rawObj[sourceVariable]["partitionID"] == to_string(gc.partitionID)) {
             NodeBlock* node = nodeManager.get(nodeId);
             if (node) {
+                execution_logger.debug("ExpandAll: Processing local relations for nodeId: " + nodeId);
                 RelationBlock *relation = RelationBlock::getLocalRelation(node->edgeRef);
                 if (relation) {
                     RelationBlock *nextRelation = relation;
                     bool isSource;
                     while (nextRelation) {
-                        if (to_string(nextRelation->source.nodeId) == nodeId) {
-                            isSource = true;
-                        } else {
-                            isSource = false;
-                        }
+                      if (to_string(nextRelation->source.nodeId) == nodeId) {
+                          isSource = true;
+                          execution_logger.debug("ExpandAll: Relation source matches nodeId, isSource = true");
+                      } else {
+                          isSource = false;
+                          execution_logger.debug("ExpandAll: Relation source does not match nodeId, isSource = false");
+                      }
 
-                        json relationData;
-                        json destNodeData;
-                        std::map<std::string, char*> relProperties = nextRelation->getAllProperties();
-                        for (auto property : relProperties) {
-                            relationData[property.first] = property.second;
-                        }
+                      json relationData;
+                      json destNodeData;
+                      std::map<std::string, char*> relProperties = nextRelation->getAllProperties();
+                      for (auto property : relProperties) {
+                          relationData[property.first] = property.second;
+                      }
+                      execution_logger.debug("ExpandAll: Extracted relation properties: " + json(relProperties).dump());
 
-                        if (relType != "" && relationData["relationship"] != relType) {
-                            if (isSource) {
-                                nextRelation = nextRelation->nextLocalSource();
-                            } else {
+                      if (relType != "" && relationData["type"] != relType) {
+                          execution_logger.debug("ExpandAll: Skipping relation, type mismatch: " + relationData["type"].get<std::string>());
+                          if (isSource) {
+                              nextRelation = nextRelation->nextLocalSource();
+                          } else {
+                              nextRelation = nextRelation->nextLocalDestination();
+                          }
+                          continue;
+                      }
+                      if (isDirectionRight) {
+                          if (!isSource)
+                          {
+                              execution_logger.debug("ExpandAll: Skipping relation, not source in directed graph");
+                              nextRelation = nextRelation->nextLocalSource();
+                              continue;
+
+                          }
+
+                      }
+                        if (!isDirectionRight)
+                        {
+                            if (isSource)
+                            {
+                                execution_logger.debug("ExpandAll: Skipping relation, not destination left directed graph");
+
                                 nextRelation = nextRelation->nextLocalDestination();
+                                continue;
                             }
-                            continue;
                         }
-                        if (isDirected && !isSource) {
-                            nextRelation = nextRelation->nextLocalDestination();
-                            continue;
-                        }
-                        for (auto& [key, value] : relProperties) {
-                            delete[] value;  // Free each allocated char* array
-                        }
-                        relProperties.clear();
-                        NodeBlock *destNode;
-                        if (isSource) {
-                            destNode = nextRelation->getDestination();
-                        } else {
-                            destNode = nextRelation->getSource();
-                        }
-                        std::string value(destNode->getMetaPropertyHead()->value);
-                        destNodeData["partitionID"] = value;
-                        std::map<std::string, char*> destProperties = destNode->getAllProperties();
-                        for (auto property : destProperties) {
-                            destNodeData[property.first] = property.second;
-                        }
-                        for (auto& [key, value] : destProperties) {
-                            delete[] value;  // Free each allocated char* array
-                        }
-                        destProperties.clear();
-                        rawObj[relVariable] = relationData;
-                        rawObj[destVariable] = destNodeData;
+
+
+                      for (auto& [key, value] : relProperties) {
+                          delete[] value;  // Free each allocated char* array
+                      }
+                      relProperties.clear();
+                      NodeBlock *destNode;
+                      if (isSource) {
+                          destNode = nextRelation->getDestination();
+                          execution_logger.debug("ExpandAll: isSource true, using getDestination()");
+                      } else {
+                          destNode = nextRelation->getSource();
+                          execution_logger.debug("ExpandAll: isSource false, using getSource()");
+                      }
+                      std::string value(destNode->getMetaPropertyHead()->value);
+                      destNodeData["partitionID"] = value;
+                      std::map<std::string, char*> destProperties = destNode->getAllProperties();
+                      for (auto property : destProperties) {
+                          destNodeData[property.first] = property.second;
+                      }
+                      execution_logger.debug("ExpandAll: Extracted destNode properties: " + json(destProperties).dump());
+                      for (auto& [key, value] : destProperties) {
+                          delete[] value;  // Free each allocated char* array
+                      }
+                      destProperties.clear();
+                      rawObj[relVariable] = relationData;
+                      rawObj[destVariable] = destNodeData;
+                      execution_logger.debug("ExpandAll: Updated rawObj with relation and destNode data: " + rawObj.dump());
+
+                        execution_logger.debug("ExpandAll: Adding local relation result to buffer: " + rawObj.dump());
 
                         buffer.add(rawObj.dump());
                         if (isSource) {
@@ -911,8 +962,11 @@ void OperatorExecutor::ExpandAll(SharedBuffer &buffer, std::string jsonPlan, Gra
                             nextRelation = nextRelation->nextLocalDestination();
                         }
                     }
+                } else {
+                    execution_logger.debug("ExpandAll: No local relations found for nodeId: " + nodeId);
                 }
 
+                execution_logger.debug("ExpandAll: Processing central relations for nodeId: " + nodeId);
                 relation = RelationBlock::getCentralRelation(node->centralEdgeRef);
                 if (relation) {
                     RelationBlock *nextRelation = relation;
@@ -932,7 +986,8 @@ void OperatorExecutor::ExpandAll(SharedBuffer &buffer, std::string jsonPlan, Gra
                             relationData[property.first] = property.second;
                         }
 
-                        if (relType != "" && relationData["relationship"] != relType) {
+                        if (relType != "" && relationData["type"] != relType) {
+                            execution_logger.debug("ExpandAll: Skipping central relation, type mismatch: " + relationData["type"].get<std::string>());
                             if (isSource) {
                                 nextRelation = nextRelation->nextCentralSource();
                             } else {
@@ -941,33 +996,59 @@ void OperatorExecutor::ExpandAll(SharedBuffer &buffer, std::string jsonPlan, Gra
                             continue;
                         }
 
-                        if (isDirected && !isSource) {
-                            nextRelation = nextRelation->nextCentralDestination();
-                            continue;
+                        if (isDirectionRight) {
+                            if (!isSource)
+                            {
+                                execution_logger.debug("ExpandAll: Skipping relation, not source in directed graph");
+                                nextRelation = nextRelation->nextCentralSource();
+                                continue;
+
+                            }
+
+                        }
+                        if (!isDirectionRight)
+                        {
+                            if (isSource)
+                            {
+                                execution_logger.debug("ExpandAll: Skipping relation, not destination left directed graph");
+
+                                nextRelation = nextRelation->nextCentralDestination();
+                                continue;
+                            }
                         }
 
-                        for (auto& [key, value] : relProperties) {
-                            delete[] value;  // Free each allocated char* array
-                        }
-                        relProperties.clear();
-                        NodeBlock *destNode;
-                        if (isSource) {
-                            destNode = nextRelation->getDestination();
-                        } else {
-                            destNode = nextRelation->getSource();
-                        }
-                        std::string value(destNode->getMetaPropertyHead()->value);
-                        destNodeData["partitionID"] = value;
-                        std::map<std::string, char*> destProperties = destNode->getAllProperties();
-                        for (auto property : destProperties) {
-                            destNodeData[property.first] = property.second;
-                        }
-                        for (auto& [key, value] : destProperties) {
-                            delete[] value;  // Free each allocated char* array
-                        }
-                        destProperties.clear();
-                        rawObj[relVariable] = relationData;
-                        rawObj[destVariable] = destNodeData;
+                       for (auto& [key, value] : relProperties) {
+                           execution_logger.debug("ExpandAll: Freeing relation property key: " + key);
+                           delete[] value;  // Free each allocated char* array
+                       }
+                       execution_logger.debug("ExpandAll: Clearing relProperties map");
+                       relProperties.clear();
+                       NodeBlock *destNode;
+                       if (isSource) {
+                           execution_logger.debug("ExpandAll: isSource true, using getDestination()");
+                           destNode = nextRelation->getDestination();
+                       } else {
+                           execution_logger.debug("ExpandAll: isSource false, using getSource()");
+                           destNode = nextRelation->getSource();
+                       }
+                       std::string value(destNode->getMetaPropertyHead()->value);
+                       execution_logger.debug("ExpandAll: destNode partitionID = " + value);
+                       destNodeData["partitionID"] = value;
+                       std::map<std::string, char*> destProperties = destNode->getAllProperties();
+                       for (auto property : destProperties) {
+                           execution_logger.debug("ExpandAll: Adding destNode property key: " + property.first);
+                           destNodeData[property.first] = property.second;
+                       }
+                       for (auto& [key, value] : destProperties) {
+                           execution_logger.debug("ExpandAll: Freeing destNode property key: " + key);
+                           delete[] value;  // Free each allocated char* array
+                       }
+                       execution_logger.debug("ExpandAll: Clearing destProperties map");
+                       destProperties.clear();
+                       execution_logger.debug("ExpandAll: Assigning relationData and destNodeData to rawObj");
+                       rawObj[relVariable] = relationData;
+                       rawObj[destVariable] = destNodeData;
+                        execution_logger.debug("ExpandAll: Adding central relation result to buffer: " + rawObj.dump());
                         buffer.add(rawObj.dump());
                         if (isSource) {
                             nextRelation = nextRelation->nextCentralSource();
@@ -975,24 +1056,30 @@ void OperatorExecutor::ExpandAll(SharedBuffer &buffer, std::string jsonPlan, Gra
                             nextRelation = nextRelation->nextCentralDestination();
                         }
                     }
+                } else {
+                    execution_logger.debug("ExpandAll: No central relations found for nodeId: " + nodeId);
                 }
+            } else {
+                execution_logger.debug("ExpandAll: NodeBlock not found for nodeId: " + nodeId);
             }
         } else {
+            execution_logger.debug("ExpandAll: Node is not in this partition, sending subquery to partition " + rawObj[sourceVariable]["partitionID"].get<std::string>());
             if (query.contains("relType")) {
                 queryString = ExpandAllHelper::generateSubQuery(query["sourceVariable"],
                                                                 query["destVariable"],
                                                                 query["relVariable"],
                                                                 isDirected,
-                                                                rawObj[sourceVariable]["id"],
-                                                                query["relType"]);
+                                                                isDirectionRight,
+                                                                rawObj[sourceVariable]["id"], query["relType"]);
             } else {
                 queryString = ExpandAllHelper::generateSubQuery(query["sourceVariable"],
                                                                 query["destVariable"],
                                                                 query["relVariable"],
                                                                 isDirected,
-                                                                rawObj[sourceVariable]["id"]);
+                                                                isDirectionRight, rawObj[sourceVariable]["id"]);
             }
             string queryPlan = ExpandAllHelper::generateSubQueryPlan(queryString);
+            execution_logger.debug("ExpandAll: Generated subquery plan: " + queryPlan);
             SharedBuffer temp(INTER_OPERATOR_BUFFER_SIZE);
             std::thread t(Utils::sendDataFromWorkerToWorker,
                           masterIP,
@@ -1004,16 +1091,250 @@ void OperatorExecutor::ExpandAll(SharedBuffer &buffer, std::string jsonPlan, Gra
                 string tmpRaw = temp.get();
                 if (tmpRaw == "-1") {
                     t.join();
+                    execution_logger.debug("ExpandAll: Received end signal from remote partition");
                     break;
                 }
                 json tmpData = json::parse(tmpRaw);
                 rawObj[relVariable] = tmpData[relVariable];
                 rawObj[destVariable] = tmpData[destVariable];
+                execution_logger.debug("ExpandAll: Adding remote relation result to buffer: " + rawObj.dump());
                 buffer.add(rawObj.dump());
             }
         }
     }
 }
+
+void OperatorExecutor::VarLengthExpandAll(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
+    execution_logger.debug("VarLengthExpandAll: Parsing query plan");
+    json query = json::parse(jsonPlan);
+    SharedBuffer sharedBuffer(INTER_OPERATOR_BUFFER_SIZE);
+    std::string nextOpt = query["NextOperator"];
+    json next = json::parse(nextOpt);
+    auto method = OperatorExecutor::methodMap[next["Operator"]];
+    execution_logger.debug("VarLengthExpandAll: Launching next operator thread: " + next["Operator"].get<std::string>());
+    std::thread result(method, std::ref(*this), std::ref(sharedBuffer), query["NextOperator"], gc);
+
+    string sourceVariable = query["sourceVariable"];
+    string destVariable   = query["destVariable"];
+    string relVariable    = query["relVariable"];
+
+    int minHops = query.contains("minHops") ?std::stoi(query["minHops"].get<std::string>()): 1;
+    int maxHops = query.contains("maxHops") ? std::stoi(query["maxHops"].get<std::string>()): 1;
+    execution_logger.debug("VarLengthExpandAll: minHops = " + std::to_string(minHops) +
+                           ", maxHops = " + std::to_string(maxHops));
+
+    string relType = "";
+    if (query.contains("relType")) {
+        relType = query["relType"];
+        execution_logger.debug("VarLengthExpandAll: relType found: " + relType);
+    }
+
+    string graphDirection = Utils::getGraphDirection(to_string(gc.graphID), masterIP);
+    bool isDirected = (graphDirection == "TRUE");
+    execution_logger.debug("VarLengthExpandAll: graphDirection = " + graphDirection + ", isDirected = " + std::to_string(isDirected));
+
+    bool isDirectionRight = false;
+    if (query.contains("direction")) {
+        isDirectionRight = query["direction"] == "right";
+        execution_logger.debug("VarLengthExpandAll: direction found: " + query["direction"].get<std::string>());
+    }
+
+    NodeManager nodeManager(gc);
+
+    while (true) {
+        string raw = sharedBuffer.get();
+        execution_logger.debug("VarLengthExpandAll: Received from sharedBuffer: " + raw);
+        if (raw == "-1") {
+            execution_logger.debug("VarLengthExpandAll: Received end signal from sharedBuffer");
+            buffer.add(raw);
+            result.join();
+            execution_logger.debug("VarLengthExpandAll: Thread joined, breaking loop");
+            break;
+        }
+
+        execution_logger.debug("VarLengthExpandAll: Processing input row: " + raw);
+        json rawObj = json::parse(raw);
+        string startNodeId = rawObj[sourceVariable]["id"];
+        string startPartition = rawObj[sourceVariable]["partitionID"].get<std::string>();
+        execution_logger.debug("VarLengthExpandAll: startNodeId = " + startNodeId + ", startPartition = " + startPartition);
+
+        if (startPartition == to_string(gc.partitionID)) {
+            execution_logger.debug("VarLengthExpandAll: Node is in this partition");
+            NodeBlock* startNode = nodeManager.get(startNodeId);
+            if (!startNode) {
+                execution_logger.debug("VarLengthExpandAll: Start NodeBlock not found for nodeId: " + startNodeId);
+                continue;
+            }
+
+            struct PathStep {
+                NodeBlock* node;
+                json pathObj;
+                int depth;
+            };
+
+            std::queue<PathStep> frontier;
+            json initialPath = rawObj;
+            initialPath["pathNodes"] = json::array({ rawObj[sourceVariable] });
+            initialPath["pathRels"]  = json::array();
+
+            execution_logger.debug("VarLengthExpandAll: Pushing initial path to frontier");
+            frontier.push({ startNode, initialPath, 0 });
+
+            while (!frontier.empty()) {
+                auto step = frontier.front();
+                frontier.pop();
+
+                NodeBlock* currentNode = step.node;
+                json currentPath = step.pathObj;
+                int depth = step.depth;
+
+                execution_logger.debug("VarLengthExpandAll: Frontier pop: nodeId = " + to_string(currentNode->nodeId) + ", depth = " + std::to_string(depth));
+
+                if (depth >= minHops && depth <= maxHops) {
+                    execution_logger.debug("VarLengthExpandAll: Adding path result of length " + std::to_string(depth) + ": " + currentPath.dump());
+                    currentPath[relVariable]=currentPath;
+                    // log currentPath
+
+                    // currentPath[destVariable]= currentPath["pathNodes"].back();
+                    currentPath["b"] = currentPath["pathNodes"].back();
+                    // execution_logger.debug(currentPath);
+                    // execution_logger.debug(destVariable);
+                     buffer.add(currentPath.dump());
+                }
+                if (depth == maxHops) {
+                    execution_logger.debug("VarLengthExpandAll: Reached maxHops, skipping further expansion");
+                    continue;
+                }
+
+                // Expand local and central relations from currentNode
+                auto expandRelations = [&](RelationBlock* relation, bool isCentral) {
+                    execution_logger.debug("VarLengthExpandAll: Expanding " + std::string(isCentral ? "central" : "local") + " relations for nodeId: " + to_string(currentNode->nodeId));
+                    RelationBlock* nextRelation = relation;
+                    while (nextRelation) {
+                        bool isSource = (to_string(nextRelation->source.nodeId) == to_string(currentNode->nodeId));
+                        execution_logger.debug("VarLengthExpandAll: Relation nodeId = " + to_string(nextRelation->source.nodeId) + ", isSource = " + std::to_string(isSource));
+
+                        json relationData;
+                        std::map<std::string, char*> relProperties = nextRelation->getAllProperties();
+                        for (auto property : relProperties) {
+                            relationData[property.first] = property.second;
+                            execution_logger.debug("VarLengthExpandAll: Relation property: " + property.first + " = " + property.second);
+                        }
+
+                        if (!relType.empty() && relationData["type"] != relType) {
+                            execution_logger.debug("VarLengthExpandAll: Skipping relation, type mismatch: " + relationData["type"].get<std::string>());
+                            nextRelation = isSource ?
+                                (isCentral ? nextRelation->nextCentralSource() : nextRelation->nextLocalSource()) :
+                                (isCentral ? nextRelation->nextCentralDestination() : nextRelation->nextLocalDestination());
+                            for (auto& [k,v] : relProperties) {
+                                execution_logger.debug("VarLengthExpandAll: Freeing relation property: " + k);
+                                delete[] v;
+                            }
+                            continue;
+                        }
+
+                        if (isDirected) {
+                            if (isDirectionRight && !isSource) {
+                                execution_logger.debug("VarLengthExpandAll: Skipping relation, not source in directed graph");
+                                nextRelation = nextRelation->nextLocalSource();
+                                for (auto& [k,v] : relProperties) {
+                                    execution_logger.debug("VarLengthExpandAll: Freeing relation property: " + k);
+                                    delete[] v;
+                                }
+                                continue;
+                            }
+                            if (!isDirectionRight && isSource) {
+                                execution_logger.debug("VarLengthExpandAll: Skipping relation, not destination left directed graph");
+                                nextRelation = nextRelation->nextLocalDestination();
+                                for (auto& [k,v] : relProperties) {
+                                    execution_logger.debug("VarLengthExpandAll: Freeing relation property: " + k);
+                                    delete[] v;
+                                }
+                                continue;
+                            }
+                        }
+
+                        NodeBlock* destNode = isSource ? nextRelation->getDestination() : nextRelation->getSource();
+                        execution_logger.debug("VarLengthExpandAll: destNodeId = " + to_string(destNode->nodeId));
+                        json destNodeData;
+                        std::map<std::string, char*> destProperties = destNode->getAllProperties();
+                        destNodeData["partitionID"] = std::string(destNode->getMetaPropertyHead()->value);
+                        for (auto property : destProperties) {
+                            destNodeData[property.first] = property.second;
+                            execution_logger.debug("VarLengthExpandAll: destNode property: " + property.first + " = " + property.second);
+                        }
+
+                        for (auto& [k,v] : relProperties) {
+                            execution_logger.debug("VarLengthExpandAll: Freeing relation property: " + k);
+                            delete[] v;
+                        }
+                        for (auto& [k,v] : destProperties) {
+                            execution_logger.debug("VarLengthExpandAll: Freeing destNode property: " + k);
+                            delete[] v;
+                        }
+
+                        json newPath = currentPath;
+                        newPath["pathNodes"].push_back(destNodeData);
+                        newPath["pathRels"].push_back(relationData);
+
+                        execution_logger.debug("VarLengthExpandAll: Pushing new path to frontier, depth = " + std::to_string(depth + 1));
+                        frontier.push({ destNode, newPath, depth + 1 });
+
+                        nextRelation = isSource ?
+                            (isCentral ? nextRelation->nextCentralSource() : nextRelation->nextLocalSource()) :
+                            (isCentral ? nextRelation->nextCentralDestination() : nextRelation->nextLocalDestination());
+                    }
+                };
+
+                // Local relations
+                RelationBlock* localRel = RelationBlock::getLocalRelation(currentNode->edgeRef);
+                if (localRel) {
+                    execution_logger.debug("VarLengthExpandAll: Expanding local relations for nodeId: " + to_string(currentNode->nodeId));
+                    expandRelations(localRel, false);
+                } else {
+                    execution_logger.debug("VarLengthExpandAll: No local relations for nodeId: " + to_string(currentNode->nodeId));
+                }
+
+                // Central relations
+                RelationBlock* centralRel = RelationBlock::getCentralRelation(currentNode->centralEdgeRef);
+                if (centralRel) {
+                    execution_logger.debug("VarLengthExpandAll: Expanding central relations for nodeId: " + to_string(currentNode->nodeId));
+                    expandRelations(centralRel, true);
+                } else {
+                    execution_logger.debug("VarLengthExpandAll: No central relations for nodeId: " + to_string(currentNode->nodeId));
+                }
+            }
+        } else {
+            // Remote partition handling: forward subquery similar to ExpandAll but with hop limits
+            execution_logger.debug("VarLengthExpandAll: Node is not in this partition, forwarding variable-length query to partition " + startPartition);
+            string queryString = ExpandAllHelper::generateVarLengthSubQuery(
+                query["sourceVariable"], query["destVariable"], query["relVariable"],
+                minHops, maxHops, isDirected, isDirectionRight, rawObj[sourceVariable]["id"],
+                relType.empty() ? "" : query["relType"]);
+
+            execution_logger.debug("VarLengthExpandAll: Generated subquery string: " + queryString);
+            string queryPlan = ExpandAllHelper::generateSubQueryPlan(queryString);
+            execution_logger.debug("VarLengthExpandAll: Generated subquery plan: " + queryPlan);
+            SharedBuffer temp(INTER_OPERATOR_BUFFER_SIZE);
+            std::thread t(Utils::sendDataFromWorkerToWorker, masterIP, gc.graphID,
+                          rawObj[sourceVariable]["partitionID"], std::ref(queryPlan), std::ref(temp));
+            execution_logger.debug("VarLengthExpandAll: Started remote worker thread");
+
+            while (true) {
+                string tmpRaw = temp.get();
+                execution_logger.debug("VarLengthExpandAll: Received from remote partition: " + tmpRaw);
+                if (tmpRaw == "-1") {
+                    t.join();
+                    execution_logger.debug("VarLengthExpandAll: Remote thread joined, breaking loop");
+                    break;
+                }
+                buffer.add(tmpRaw);
+            }
+        }
+    }
+    execution_logger.debug("VarLengthExpandAll: Finished processing all input rows");
+}
+
 
 void OperatorExecutor::AggregationFunction(SharedBuffer &buffer, std::string jsonPlan, GraphConfig gc) {
     json query = json::parse(jsonPlan);

@@ -482,6 +482,7 @@ string DirectedRelationshipTypeScan::execute() {
     return directed.dump();
 }
 
+
 DirectedAllRelationshipScan::DirectedAllRelationshipScan(std::string direction, std::string startVar,
                                                          std::string endVar, std::string relVar)
         : startVar(startVar), endVar(endVar), relVar(relVar), direction(direction) {}
@@ -523,6 +524,38 @@ string ExpandAll::execute() {
     }
     return expandAll.dump();
 }
+
+
+VarLengthExpandAll::VarLengthExpandAll(Operator *input, std::string startVar, std::string destVar, std::string relVar,
+                     std::string relType, std::string direction , string minHops, string maxHops)
+                     : input(input), relType(relType), relVar(relVar), startVar(startVar),
+                     destVar(destVar), direction(direction), minHops(minHops), maxHops(maxHops) {}
+
+string VarLengthExpandAll::execute() {
+    json varLengthExpandAll;
+    varLengthExpandAll["Operator"] = "VarLengthExpandAll";
+    varLengthExpandAll["NextOperator"] = input->execute();
+    varLengthExpandAll["sourceVariable"] = startVar;
+    varLengthExpandAll["destVariable"] = destVar;
+    varLengthExpandAll["relVariable"] = relVar;
+    varLengthExpandAll["minHops"] = minHops;
+    varLengthExpandAll["maxHops"] = maxHops;
+    if (relType != "null" && direction == "") {
+        varLengthExpandAll["relType"] = relType;
+    } else if (relType == "null" && direction == "right") {
+        varLengthExpandAll["direction"] = direction;
+    } else if (relType != "null" && direction == "right") {
+        varLengthExpandAll["relType"] = relType;
+        varLengthExpandAll["direction"] = direction;
+    } else if (relType == "null" && direction == "left") {
+        varLengthExpandAll["direction"] = direction;
+    } else if (relType != "null" && direction == "left") {
+        varLengthExpandAll["relType"] = relType;
+        varLengthExpandAll["direction"] = direction;
+    }
+    return varLengthExpandAll.dump();
+}
+
 
 Apply::Apply(Operator* operator1) : operator1(operator1) {}
 
