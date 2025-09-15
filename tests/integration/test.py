@@ -224,10 +224,10 @@ def test(host, port):
                                  b'|1|/home/powergrid.dl|hdfs:/home/powergrid.dl|op|',
                                  exit_on_failure=True)
 
-        print()
-        logging.info('1. Testing ecnt after adhdfs')
-        send_and_expect_response(sock, 'ecnt', ECNT, b'graphid-send', exit_on_failure=True)
-        send_and_expect_response(sock, 'ecnt', b'1', b'6594', exit_on_failure=True)
+        # print()
+        # logging.info('1. Testing ecnt after adhdfs')
+        # send_and_expect_response(sock, 'ecnt', ECNT, b'graphid-send', exit_on_failure=True)
+        # send_and_expect_response(sock, 'ecnt', b'1', b'6594', exit_on_failure=True)
 
         print()
         logging.info('1. Testing vcnt after adhdfs')

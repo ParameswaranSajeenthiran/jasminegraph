@@ -85,9 +85,9 @@ if [ -n "$DEBUG" ]; then
     fi
 else
     if [ $MODE -eq 1 ]; then
-        ./JasmineGraph $PROFILE $MODE $MASTERIP $WORKERS $WORKERIP $ENABLE_NMON
+        valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph $PROFILE $MODE $MASTERIP $WORKERS $WORKERIP $ENABLE_NMON
     else
-        ./JasmineGraph $PROFILE $MODE $HOST_NAME $MASTERIP $SERVER_PORT $SERVER_DATA_PORT $ENABLE_NMON
+        valgrind --leak-check=full --show-leak-kinds=all ./JasmineGraph $PROFILE $MODE $HOST_NAME $MASTERIP $SERVER_PORT $SERVER_DATA_PORT $ENABLE_NMON
     fi
 fi
 
