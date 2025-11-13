@@ -3,7 +3,7 @@
 # Function to check if pod is in Pending/Running state
 pod_status=""
 check_pod_status() {
-    pod_status=$(kubectl get pod jasminegraph-unit-test-pod --no-headers -o custom-columns=":status.phase")
+    pod_status=$(minikube kubectl -- get pod jasminegraph-unit-test-pod --no-headers -o custom-columns=":status.phase")
 
     if [[ $pod_status == "Pending" || $pod_status == "ContainerCreating" ]]; then
         echo 0
@@ -11,12 +11,12 @@ check_pod_status() {
         echo 1
     fi
 }
+export OMP_NUM_THREADS=1
+# mkdir coverage
+minikube kubectl --  apply -f ./k8s/configs.yaml
+minikube kubectl -- apply -f ./.github/workflows/resources/unit-test-conf.yaml
 
-mkdir coverage
-kubectl apply -f ./k8s/configs.yaml
-kubectl apply -f ./.github/workflows/resources/unit-test-conf.yaml
-
-timeout=300 # Set the timeout in seconds (adjust as needed)
+timeout=60 # Set the timeout in seconds (adjust as needed)
 start_time=$(date +%s)
 
 while [[ $(check_pod_status) == "0" ]]; do
@@ -32,13 +32,13 @@ while [[ $(check_pod_status) == "0" ]]; do
 done
 
 echo "----------------------------- logs -----------------------------"
-kubectl logs -f jasminegraph-unit-test-pod
+minikube kubectl -- logs -f jasminegraph-unit-test-pod
 
 check_pod_status
 if [[ $pod_status != "Running" && $pod_status != "Completed" ]]; then
     echo "Pod jasminegraph-unit-test-pod is in $pod_status state"
     echo "Unit tests failed"
     echo "----------------------------- details --------------------------"
-    kubectl describe pod jasminegraph-unit-test-pod
+    minikube kubectl -- describe pod jasminegraph-unit-test-pod
     exit 1
 fi

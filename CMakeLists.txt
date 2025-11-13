@@ -308,12 +308,12 @@ target_link_libraries(JasmineGraphLib PRIVATE /usr/local/libhdfs3/lib/libhdfs3.s
 target_link_libraries(JasmineGraph JasmineGraphLib)
 target_link_libraries(JasmineGraph curl)
 
-target_link_libraries(JasmineGraphLib PRIVATE OpenMP::OpenMP_CXX faiss openblas)
+#target_link_libraries(JasmineGraphLib PRIVATE OpenMP::OpenMP_CXX faiss openblas)
 target_link_libraries(JasmineGraph  OpenMP::OpenMP_CXX faiss openblas)
 find_package(OpenMP REQUIRED)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(JasmineGraph  OpenMP::OpenMP_CXX faiss)
-    target_link_libraries(JasmineGraphLib PRIVATE  OpenMP::OpenMP_CXX)
+    #target_link_libraries(JasmineGraphLib PRIVATE  OpenMP::OpenMP_CXX)
 endif()
 include_directories(/usr/local/libhdfs3/include/hdfs/)
 include_directories(/usr/include/oneapi/)
@@ -329,7 +329,7 @@ target_link_libraries(JasmineGraphLib PRIVATE /usr/local/lib/libkubernetes.so)
 target_link_libraries(JasmineGraphLib PRIVATE yaml-cpp)
 target_link_libraries(JasmineGraphLib PRIVATE curl)
 target_link_libraries(JasmineGraphLib PRIVATE antlr4-runtime)
-target_link_libraries(JasmineGraphLib PRIVATE faiss)
+#target_link_libraries(JasmineGraphLib PRIVATE faiss)
 
 #target_link_libraries(JasmineGraphLib PRIVATE /usr/local/lib/llama.cpp/build/libllama.so)
 

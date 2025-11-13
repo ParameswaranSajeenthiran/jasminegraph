@@ -37,6 +37,7 @@ spec:
   containers:
     - name: jasminegraph-container
       image: jasminegraph:unit
+      imagePullPolicy: Never
       volumeMounts:
         - name: host-volume
           mountPath: /home/ubuntu/software/jasminegraph/coverage
