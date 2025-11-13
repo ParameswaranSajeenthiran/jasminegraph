@@ -20,7 +20,7 @@ jobs:
 
       - name: Build unit test
         run: |
-          docker build -t jasminegraph .
+          # docker build -t jasminegraph .
           docker build -f ./tests/unit/Dockerfile -t jasminegraph:unit .
 
       - uses: jupyterhub/action-k3s-helm@v4
