@@ -17,31 +17,43 @@
 
 Logger hash_partitioner_logger;
 
-int PARTITION_FILE_EDGE_COUNT_THRESHOLD = 1000000;
-
 HDFSMultiThreadedHashPartitioner::HDFSMultiThreadedHashPartitioner(int numberOfPartitions, int graphID,
-    std::string masterIp, bool isDirected)
-        : numberOfPartitions(numberOfPartitions), graphId(graphID),
-          partitionLocks(numberOfPartitions), vertexCount(0), edgeCount(0),
-          localEdgeArrays(numberOfPartitions), edgeCutsArrays(numberOfPartitions),
-          localEdgeMutexes(numberOfPartitions), edgeAvailableCV(numberOfPartitions),
-          edgeReady(numberOfPartitions, false), edgeCutsMutexes(numberOfPartitions),
-          edgeCutsAvailableCV(numberOfPartitions), edgeCutsReady(numberOfPartitions, false),
-          terminateConsumers(false), masterIp(masterIp), partitionMutexArray(numberOfPartitions),
-          isDirected(isDirected) {
-    this->outputFilePath = Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.hdfs.tempfolder")
-            + "/" + std::to_string(this->graphId);
+                                                                   std::string masterIp, bool isDirected,
+                                                                   std::vector<JasmineGraphServer::worker> workers,
+                                                                   bool isEmbedGraph, int partitionFileEdgeThreshold)
+    : numberOfPartitions(numberOfPartitions),
+      graphId(graphID),
+      partitionLocks(numberOfPartitions),
+      vertexCount(0),
+      edgeCount(0),
+      localEdgeArrays(numberOfPartitions),
+      edgeCutsArrays(numberOfPartitions),
+      localEdgeMutexes(numberOfPartitions),
+      edgeAvailableCV(numberOfPartitions),
+      edgeReady(numberOfPartitions, false),
+      edgeCutsMutexes(numberOfPartitions),
+      edgeCutsAvailableCV(numberOfPartitions),
+      edgeCutsReady(numberOfPartitions, false),
+      terminateConsumers(false),
+      masterIp(masterIp),
+      partitionMutexArray(numberOfPartitions),
+      isDirected(isDirected),
+      isEmbedGraph(isEmbedGraph),
+      partitionFileEdgeThreshold(partitionFileEdgeThreshold) {
+    this->outputFilePath = Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.hdfs.tempfolder") + "/" +
+                           std::to_string(this->graphId);
     Utils::createDirectory(this->outputFilePath);
 
-    JasmineGraphServer *server = JasmineGraphServer::getInstance();
-    std::vector<JasmineGraphServer::worker> workers = server->workers(numberOfPartitions);
 
     // Start consumer threads and store them
     for (int i = 0; i < numberOfPartitions; i++) {
-        this->partitions.push_back(Partition(i, numberOfPartitions));
+        // print worker
+        hash_partitioner_logger.info("Worker for partition " + std::to_string(i) + ": "
+                                      + workers[i].hostname + ":" + std::to_string(workers[i].port));
+        this->partitions.push_back(std::make_unique<Partition>(i, numberOfPartitions));
         localEdgeThreads.emplace_back(&HDFSMultiThreadedHashPartitioner::consumeLocalEdges, this, i, workers[i]);
         edgeCutThreads.emplace_back(&HDFSMultiThreadedHashPartitioner::consumeEdgeCuts, this, i, workers[i]);
-        Utils::assignPartitionToWorker(graphId, i, workers.at(i).hostname, workers.at(i).port);
+        // Utils::assignPartitionToWorker(graphId, i, workers.at(i).hostname, workers.at(i).port);
     }
 }
 
@@ -56,9 +68,9 @@ void HDFSMultiThreadedHashPartitioner::addLocalEdge(const std::string &edge, int
         edgeReady[index] = true;
         edgeAvailableCV[index].notify_one();
     } else {
-        hash_partitioner_logger.error("Invalid partition index : "
-        + std::to_string(index) + " in addLocalEdge. Total number of partitions : "
-        + std::to_string(numberOfPartitions));
+        hash_partitioner_logger.error(
+            "Invalid partition index : " + std::to_string(index) +
+            " in addLocalEdge. Total number of partitions : " + std::to_string(numberOfPartitions));
     }
 }
 
@@ -131,8 +143,10 @@ void HDFSMultiThreadedHashPartitioner::consumeLocalEdges(int partitionIndex, Jas
                                               std::to_string(threadEdgeCount) +
                                               " edges: " + filePath);
                 partitionMutexArray[partitionIndex].lock();
-                Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath, masterIp,
-                                             JasmineGraphInstanceProtocol::HDFS_LOCAL_STREAM_START);
+                Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath,
+                    masterIp,
+                                             JasmineGraphInstanceProtocol::HDFS_LOCAL_STREAM_START,
+                                             this->isEmbedGraph);
                 partitionMutexArray[partitionIndex].unlock();
             }
             break;
@@ -148,18 +162,19 @@ void HDFSMultiThreadedHashPartitioner::consumeLocalEdges(int partitionIndex, Jas
             threadEdgeCount++;
 
             // Check if the edge count has reached the threshold
-            if (threadEdgeCount == PARTITION_FILE_EDGE_COUNT_THRESHOLD) {
+            if (threadEdgeCount == this->partitionFileEdgeThreshold) {
                 threadEdgeCount = 0;
                 partitionFile.close();  // Close the file after reaching the threshold
 
                 partitionMutexArray[partitionIndex].lock();
-                Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath, masterIp,
-                                             JasmineGraphInstanceProtocol::HDFS_LOCAL_STREAM_START);
+                Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath,
+                    masterIp, JasmineGraphInstanceProtocol::HDFS_LOCAL_STREAM_START,
+                                             this->isEmbedGraph);
                 partitionMutexArray[partitionIndex].unlock();
 
-                hash_partitioner_logger.debug("Local edge consumer " + std::to_string(partitionIndex) +
+                hash_partitioner_logger.info("Local edge consumer " + std::to_string(partitionIndex) +
                                               " generated file of " +
-                                              std::to_string(PARTITION_FILE_EDGE_COUNT_THRESHOLD) +
+                                              std::to_string(this->partitionFileEdgeThreshold) +
                                               " edges: " + filePath);
 
                 // Increment file index and open the next file
@@ -179,7 +194,7 @@ void HDFSMultiThreadedHashPartitioner::consumeLocalEdges(int partitionIndex, Jas
             string destinationId = std::string(jsonEdge["destination"]["id"]);
 
             std::lock_guard<std::mutex> partitionLock(partitionLocks[partitionIndex]);
-            partitions[partitionIndex].addEdge({sourceId, destinationId}, isDirected);
+            partitions[partitionIndex]->addEdge({sourceId, destinationId}, isDirected);
         }
 
         // Reset the flag after processing the current batch of edges
@@ -224,7 +239,8 @@ void HDFSMultiThreadedHashPartitioner::consumeEdgeCuts(int partitionIndex, Jasmi
                                               " edges: " + filePath);
                 partitionMutexArray[partitionIndex].lock();
                 Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath, masterIp,
-                                             JasmineGraphInstanceProtocol::HDFS_CENTRAL_STREAM_START);
+                                             JasmineGraphInstanceProtocol::HDFS_CENTRAL_STREAM_START,
+                                             this->isEmbedGraph);
                 partitionMutexArray[partitionIndex].unlock();
             }
             break;
@@ -240,18 +256,18 @@ void HDFSMultiThreadedHashPartitioner::consumeEdgeCuts(int partitionIndex, Jasmi
             threadEdgeCount++;
 
             // If threshold reached, close current file and open a new one
-            if (threadEdgeCount == PARTITION_FILE_EDGE_COUNT_THRESHOLD) {
+            if (threadEdgeCount == this->partitionFileEdgeThreshold) {
                 threadEdgeCount = 0;
                 edgeCutsFile.close();
 
                 partitionMutexArray[partitionIndex].lock();
-                Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath, masterIp,
-                                             JasmineGraphInstanceProtocol::HDFS_CENTRAL_STREAM_START);
+                Utils::sendFileChunkToWorker(worker.hostname, worker.port, worker.dataPort, filePath,
+                    masterIp, JasmineGraphInstanceProtocol::HDFS_CENTRAL_STREAM_START, this->isEmbedGraph);
                 partitionMutexArray[partitionIndex].unlock();
 
                 hash_partitioner_logger.debug("Central edge consumer " + std::to_string(partitionIndex) +
                                               " generated file of " +
-                                              std::to_string(PARTITION_FILE_EDGE_COUNT_THRESHOLD) +
+                                              std::to_string(this->partitionFileEdgeThreshold) +
                                               " edges: " + filePath);
 
                 // Open the next file
@@ -270,9 +286,26 @@ void HDFSMultiThreadedHashPartitioner::consumeEdgeCuts(int partitionIndex, Jasmi
             string sourceId = std::string(jsonEdge["source"]["id"]);
             string destinationId = std::string(jsonEdge["destination"]["id"]);
 
-            // Add edge cuts to the partition
-            std::lock_guard<std::mutex> partitionLock(partitionLocks[partitionIndex]);
-            partitions[partitionIndex].addToEdgeCuts(sourceId, destinationId, partitionIndex);
+            // First, add edge cuts to the current partition
+            {
+                std::lock_guard<std::mutex> partitionLock(partitionLocks[partitionIndex]);
+                partitions[partitionIndex]->addToEdgeCuts(sourceId, destinationId, partitionIndex);
+            }
+
+            int destinationIndex = std::stoi(destinationId) % this->numberOfPartitions;
+            hash_partitioner_logger.debug("Edge cut from " + sourceId + " to " + destinationId +
+                                          " assigned to partition " + std::to_string(partitionIndex));
+
+            // Handle cross-partition vertex synchronization safely
+            if (destinationIndex != partitionIndex) {
+                // Lock only the destination partition for checking and adding vertex
+                std::lock_guard<std::mutex> destPartitionLock(partitionLocks[destinationIndex]);
+                if (!partitions[destinationIndex]->isExist(destinationId)) {
+                    partitions[destinationIndex]->incrementVertexCount();
+                    // Atomically check and add the vertex to avoid race conditions
+                    partitions[destinationIndex]->addToEdgeList(destinationId);
+                }
+            }
         }
 
         edgeCutsReady[partitionIndex] = false;  // Reset the flag after processing
@@ -296,24 +329,38 @@ void HDFSMultiThreadedHashPartitioner::updatePartitionTable() {
             "edgecount,central_edgecount) VALUES(\"" +
             std::to_string(i) + "\", \"" +
             std::to_string(this->graphId) + "\", \"" +
-            std::to_string(partitions.at(i).getLocalVertexCount()) + "\",\"" +
-            std::to_string(partitions.at(i).getCentralVertexCount(i)) + "\",\"" +
-            std::to_string(partitions.at(i).getEdgesCount(isDirected)) + "\", \"" +
-            std::to_string(partitions.at(i).edgeCutsCount())+ "\")";
+            std::to_string(partitions.at(i)->getLocalVertexCount()) + "\",\"" +
+            std::to_string(partitions.at(i)->getCentralVertexCount(i)) + "\",\"" +
+            std::to_string(partitions.at(i)->getEdgesCount(isDirected)) + "\", \"" +
+            std::to_string(partitions.at(i)->edgeCutsCount())+ "\")";
 
         dbLock.lock();
         sqlite->runUpdate(sqlStatement);
         dbLock.unlock();
     }
-
     sqlite->finalize();
     delete sqlite;
 }
 
+json HDFSMultiThreadedHashPartitioner::getPartitionsMeta() {
+    json partitionsMeta = json::array();
+    for (int i = 0; i < numberOfPartitions; i++) {
+        json partition = {{"idpartition", i},
+                          {"graph_idgraph", this->graphId},
+                          {"vertexcount", std::to_string(partitions.at(i)->getLocalVertexCount())},
+                          {"central_vertexcount", std::to_string(partitions.at(i)->getCentralVertexCount(i))},
+                          {"edgecount", std::to_string(partitions.at(i)->getEdgesCount(isDirected))},
+                          {"central_edgecount_with_dups", std::to_string(0)},
+                          {"central_edgecount", std::to_string(partitions.at(i)->edgeCutsCount())}};
+
+        partitionsMeta.push_back(partition);
+    }
+    return partitionsMeta;
+}
 long HDFSMultiThreadedHashPartitioner::getVertexCount() {
     int totalVertices = 0;
     for (auto & partition : this->partitions) {
-        totalVertices += partition.getVertextCount();
+        totalVertices += partition->getVertextCount();
     }
     return totalVertices;
 }
@@ -322,8 +369,8 @@ long HDFSMultiThreadedHashPartitioner::getEdgeCount() {
     int totalEdges = 0;
     int edgeCuts = 0;
     for (auto & partition : this->partitions) {
-        totalEdges += partition.getEdgesCount(isDirected);
-        edgeCuts += partition.edgeCutsCount();
+        totalEdges += partition->getEdgesCount(isDirected);
+        edgeCuts += partition->edgeCutsCount();
     }
     return  totalEdges + edgeCuts / 2;
 }

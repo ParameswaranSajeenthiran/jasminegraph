@@ -1,4 +1,4 @@
-FROM miyurud/jasminegraph-prerequisites:20241231T070657
+FROM parameswaransajeenthiran/jasminegraph-prerequisites:new
 
 RUN apt-get update
 RUN apt-get install libcurl4-openssl-dev -y
@@ -35,6 +35,6 @@ COPY ./tests/unit ./tests/unit
 WORKDIR "${JASMINEGRAPH_HOME}/build"
 
 RUN cmake -DCMAKE_BUILD_TYPE=DEBUG ..
-RUN make -j4
+RUN make -j20
 
-CMD ["bash", "-c", "LD_LIBRARY_PATH=/usr/local/lib make -j2 coverage && cp coverage.xml ../coverage/"]
+CMD ["bash", "-c", "LD_LIBRARY_PATH=/usr/local/lib make -j1 coverage && cp coverage.xml ../coverage/"]

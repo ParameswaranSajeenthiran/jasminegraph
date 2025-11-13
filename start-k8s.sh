@@ -2,13 +2,22 @@
 
 set -e
 
-TIMEOUT_SECONDS=60
+TIMEOUT_SECONDS=2400
 
 if [ $1 == "clean" ]; then
-    kubectl delete deployments -l application=jasminegraph
-    kubectl delete services -l application=jasminegraph
-    kubectl delete pvc -l application=jasminegraph
-    kubectl delete pv -l application=jasminegraph
+    echo "Cleaning JasmineGraph resources..."
+    minikube kubectl -- delete deployments -l application=jasminegraph
+    minikube kubectl -- delete services -l application=jasminegraph
+    minikube kubectl -- delete pvc -l application=jasminegraph
+    minikube kubectl -- delete pv -l application=jasminegraph
+
+    echo "Deleting Loki, Grafana, and Alloy Helm releases..."
+    helm uninstall loki -n loki || true
+    helm uninstall grafana-alloy -n loki || true
+    helm uninstall grafana -n grafana || true
+
+    minikube kubectl -- delete namespace loki || true
+    minikube kubectl -- delete namespace grafana || true
     exit 0
 fi
 
@@ -70,8 +79,32 @@ if [ -z "$MAX_COUNT" ]; then
     MAX_COUNT="4"
 fi
 
-kubectl apply -f ./k8s/rbac.yaml
-kubectl apply -f ./k8s/pushgateway.yaml
+if ! command -v helm &>/dev/null; then
+    echo "Helm not found. Install Helm from https://helm.sh/docs/intro/install/ "
+    echo "Please re-run the script."
+    exit 0
+fi
+
+export STORAGE_CLASS_NAME=$(minikube kubectl -- get storageclass | grep "(default)" | awk '{print $1}')
+echo "Detected default storage class: $STORAGE_CLASS_NAME"
+
+helm repo add grafana https://grafana.github.io/helm-charts
+helm repo update
+
+helm install loki grafana/loki -n loki --create-namespace --set singleBinary.persistence.storageClass="$STORAGE_CLASS_NAME" -f ./k8s/helm/loki.yaml
+minikube kubectl -- wait --for=condition=Ready pod --all -n loki --timeout=180s
+sleep .2
+
+helm install grafana-alloy grafana/alloy -n loki -f ./k8s/helm/alloy.yaml
+minikube kubectl -- wait --for=condition=Ready pod -l app.kubernetes.io/name=alloy -n loki --timeout=180s
+sleep .2
+
+helm install grafana grafana/grafana -n grafana --create-namespace -f ./k8s/helm/grafana.yaml
+minikube kubectl -- wait --for=condition=Ready pod --all -n grafana --timeout=300s
+sleep .2
+
+minikube kubectl -- apply -f ./k8s/rbac.yaml
+minikube kubectl -- apply -f ./k8s/pushgateway.yaml
 
 # wait until pushgateway starts listening
 cur_timestamp="$(date +%s)"
@@ -83,7 +116,7 @@ while true; do
         echo "Timeout"
         exit 1
     fi
-    pushgatewayIP="$(kubectl get services |& grep pushgateway | tr '\t' ' ' | tr -s ' ' | cut -d ' ' -f 3)"
+    pushgatewayIP="$(minikube kubectl -- get services |& grep pushgateway | tr '\t' ' ' | tr -s ' ' | cut -d ' ' -f 3)"
     if [ ! -z "$pushgatewayIP" ]; then
         break
     fi
@@ -91,7 +124,7 @@ while true; do
     sleep .2
 done
 
-pushgateway_address="${pushgatewayIP}:9091" envsubst <"./k8s/prometheus.yaml" | kubectl apply -f -
+pushgateway_address="${pushgatewayIP}:9091" envsubst <"./k8s/prometheus.yaml" | minikube kubectl -- apply -f -
 
 cur_timestamp="$(date +%s)"
 end_timestamp="$((cur_timestamp + TIMEOUT_SECONDS))"
@@ -100,7 +133,7 @@ while true; do
         echo "Timeout"
         exit 1
     fi
-    prometheusIP="$(kubectl get services |& grep prometheus | tr '\t' ' ' | tr -s ' ' | cut -d ' ' -f 3)"
+    prometheusIP="$(minikube kubectl -- get services |& grep prometheus | tr '\t' ' ' | tr -s ' ' | cut -d ' ' -f 3)"
     if [ ! -z "$prometheusIP" ]; then
         break
     fi
@@ -111,7 +144,7 @@ done
 pushgateway_address="${pushgatewayIP}:9091/" \
     prometheus_address="${prometheusIP}:9090/" \
     max_worker_count="${MAX_COUNT}" \
-    envsubst <"./k8s/configs.yaml" | kubectl apply -f -
+    envsubst <"./k8s/configs.yaml" | minikube kubectl -- apply -f -
 
 metadb_path="${META_DB_PATH}" \
     performancedb_path="${PERFORMANCE_DB_PATH}" \
@@ -119,26 +152,26 @@ metadb_path="${META_DB_PATH}" \
     config_directory_path="${CONFIG_DIRECTORY_PATH}" \
     log_path="${LOG_PATH}" \
     aggregate_path="${AGGREGATE_PATH}" \
-    envsubst <"./k8s/volumes.yaml" | kubectl apply -f -
+    envsubst <"./k8s/volumes.yaml" | minikube kubectl -- apply -f -
 
 no_of_workers="${NO_OF_WORKERS}" \
     enable_nmon="${ENABLE_NMON}" \
-    envsubst <"./k8s/master-deployment.yaml" | kubectl apply -f -
+    envsubst <"./k8s/master-deployment.yaml" | minikube kubectl -- apply -f -
 
 # Wait till all pods are running
 cur_timestamp="$(date +%s)"
 end_timestamp="$((cur_timestamp + TIMEOUT_SECONDS))"
 while true; do
     if [ "$(date +%s)" -gt "$end_timestamp" ]; then
-        for pod in $(kubectl get pods -o jsonpath='{.items[*].metadata.name}'); do
-            kubectl describe pod "$pod"
+        for pod in $(minikube kubectl -- get pods -o jsonpath='{.items[*].metadata.name}'); do
+            minikube kubectl -- describe pod "$pod"
         done
         echo "Pods are not running"
         exit 1
     fi
 
     set +e
-    pods_status="$(kubectl get pods | grep -v 'STATUS' | grep -v 'Running')"
+    pods_status="$(minikube kubectl -- get pods | grep -v 'STATUS' | grep -v 'Running')"
     set -e
     if [ -z "$pods_status" ]; then
         echo "All pods are running"
@@ -160,7 +193,7 @@ while true; do
         echo "Timeout"
         exit 1
     fi
-    masterIP="$(kubectl get services |& grep jasminegraph-master-service | tr '\t' ' ' | tr -s ' ' | cut -d ' ' -f 3)"
+    masterIP="$(minikube kubectl -- get services |& grep jasminegraph-master-service | tr '\t' ' ' | tr -s ' ' | cut -d ' ' -f 3)"
     if [ ! -z "$masterIP" ]; then
         echo
         echo "Connect to JasmineGraph at $masterIP:7777"

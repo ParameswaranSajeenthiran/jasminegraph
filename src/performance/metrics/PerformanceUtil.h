@@ -51,6 +51,7 @@ struct Place {
     std::string placeId;
 };
 
+
 class PerformanceUtil {
  public:
     // PerformanceUtil(SQLiteDBInterface *sqlLiteDB, PerformanceSQLiteDBInterface *perfDb);
@@ -80,6 +81,7 @@ class PerformanceUtil {
                                                  int elapsedTime, std::string masterIP);
     static double getAggregatedLoadAverage(std::string graphId, std::string placeId, std::string command,
                                            std::string category, int elapsedTime);
+
 
  private:
     static void collectLocalSLAResourceUtilization(std::string graphId, std::string placeId, std::string command,

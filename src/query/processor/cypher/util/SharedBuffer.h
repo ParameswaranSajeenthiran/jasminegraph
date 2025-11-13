@@ -9,7 +9,10 @@
 #include <deque>
 #include <mutex>
 #include <condition_variable>
+#include <optional>
 #include <string>
+#include <optional>
+
 
 class SharedBuffer {
  private:
@@ -30,6 +33,8 @@ class SharedBuffer {
     bool tryGet(std::string& data);
 
     bool empty();
+    void clear();
+    std::optional<std::string> getWithTimeout(int timeoutSeconds);
 };
 
 #endif  // JASMINEGRAPH_SHAREDBUFFER_H

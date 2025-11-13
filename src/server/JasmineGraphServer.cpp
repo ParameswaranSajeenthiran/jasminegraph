@@ -75,6 +75,7 @@ static int getDataPortByHost(const std::string &host);
 static size_t getWorkerCount();
 
 static std::vector<JasmineGraphServer::worker> hostWorkerList;
+
 static unordered_map<string, pair<int, int>> hostPortMap;
 std::unordered_map<int, int> aggregateWeightMap;
 
@@ -154,7 +155,7 @@ int JasmineGraphServer::run(std::string masterIp, int numberofWorkers, std::stri
     if (jasminegraph_profile == PROFILE_K8S) {
         // Create K8s worker controller
         (void)K8sWorkerController::getInstance(masterIp, numberofWorkers, sqlite);
-        start_scale_down(this->sqlite);
+        // start_scale_down(this->sqlite);
         hostWorkerList = K8sWorkerController::workerList;
     } else {
         start_workers();
@@ -460,7 +461,7 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                         "/var/tmp/jasminegraph/logs" + " -p " + std::to_string(workerPortsVector.at(i)) + ":" +
                         std::to_string(workerPortsVector.at(i)) + " -p " + std::to_string(workerDataPortsVector.at(i)) +
                         ":" + std::to_string(workerDataPortsVector.at(i)) + " -e WORKER_ID=" + to_string(i) +
-                        " jasminegraph:latest --MODE 2 --HOST_NAME " + host + " --MASTERIP " + masterHost +
+                        "  jasminegraph:latest --MODE 2 --HOST_NAME " + host + " --MASTERIP " + masterHost +
                         " --SERVER_PORT " + std::to_string(workerPortsVector.at(i)) + " --SERVER_DATA_PORT " +
                         std::to_string(workerDataPortsVector.at(i)) + " --ENABLE_NMON " + enableNmon;
                 }
@@ -477,12 +478,13 @@ void JasmineGraphServer::startRemoteWorkers(std::vector<int> workerPortsVector, 
                 } else {
                     serverStartScript =
                         "docker -H ssh://" + host + " run -v " + instanceDataFolder + ":" + instanceDataFolder +
-                        " -v " + aggregateDataFolder + ":" + aggregateDataFolder + " -v " + nmonFileLocation + ":" +
+                        " -v " + aggregateDataFolder + ":" + aggregateDataFolder +
+                            " -v /var/tmp:/var/tmp/hdfs/filechunks" " -v " + nmonFileLocation + ":" +
                         nmonFileLocation + " -v " + instanceDataFolder + "/" + to_string(i) + "/logs" + ":" +
                         "/var/tmp/jasminegraph/logs" + " -p " + std::to_string(workerPortsVector.at(i)) + ":" +
                         std::to_string(workerPortsVector.at(i)) + " -p " + std::to_string(workerDataPortsVector.at(i)) +
                         ":" + std::to_string(workerDataPortsVector.at(i)) + " -e WORKER_ID=" + to_string(i) +
-                        " jasminegraph:latest --MODE 2 --HOST_NAME " + host + " --MASTERIP " + masterHost +
+                        "  jasminegraph:latest --MODE 2 --HOST_NAME " + host + " --MASTERIP " + masterHost +
                         " --SERVER_PORT " + std::to_string(workerPortsVector.at(i)) + " --SERVER_DATA_PORT " +
                         std::to_string(workerDataPortsVector.at(i)) + " --ENABLE_NMON " + enableNmon;
                 }
@@ -853,6 +855,64 @@ static unordered_map<string, float> scaleK8s(size_t npart) {
     return cpu_loads;
 }
 
+JasmineGraphServer::worker JasmineGraphServer::getDesignatedWorker() {
+    worker best_worker;
+    double best_score = std::numeric_limits<double>::max();
+
+    server_logger.debug("Selecting designated worker based on Prometheus metrics...");
+
+    // Step 1: Define the metrics we care about
+    std::vector<std::string> metricNames = {"cpu_usage", "memory_usage_percentage", "cpu_load_percentage"};
+
+    // Step 2: Fetch metric history for all hosts for the last N seconds
+    int secondsBack = 300;  // last 5 minutes, configurable
+    auto hostMetrics = Utils::getMetricsForHosts(metricNames, secondsBack);
+
+    // Step 3: Iterate through each worker and compute scores
+    for (auto &worker : hostWorkerList) {
+        std::string host = worker.hostname +":"+ std::to_string(worker.port);
+        if (hostMetrics.find(host) == hostMetrics.end()) {
+            server_logger.warn("No metrics found for host: " + host);
+            continue;
+        }
+
+        Utils::MetricHistory &hist = hostMetrics[host];
+
+        // Step 4: Compute EWMA and slope for each metric
+        double cpu_ewma = Utils::exponentialWeightedMovingAverage(hist.cpu_usage);
+        double mem_ewma = Utils::exponentialWeightedMovingAverage(hist.memory_usage);
+        double load_ewma = Utils::exponentialWeightedMovingAverage(hist.load_average);
+
+        double cpu_slope = Utils::computeSlope(hist.cpu_usage);
+        double mem_slope = Utils::computeSlope(hist.memory_usage);
+
+        // Step 5: Compute score (weighted combination of usage + trends)
+        double score = 0.5 * cpu_ewma + 0.3 * mem_ewma + 0.2 * load_ewma;
+        score += 0.2 * std::max(0.0, cpu_slope);  // penalize rising CPU
+        score += 0.1 * std::max(0.0, mem_slope);  // penalize rising memory
+
+        server_logger.debug("Worker " + host + ":" + std::to_string(worker.port) +
+                            " -> score: " + std::to_string(score));
+
+        if (score < best_score) {
+            best_worker = worker;
+            best_score = score;
+        }
+    }
+
+    if (best_score == std::numeric_limits<double>::max()) {
+        server_logger.error("No valid metrics available; defaulting to last worker");
+        best_worker = hostWorkerList.back();
+    } else {
+        server_logger.info("Designated worker selected: " + best_worker.hostname +
+                           " with score " + std::to_string(best_score));
+    }
+
+    return best_worker;
+}
+
+
+
 std::vector<JasmineGraphServer::worker> JasmineGraphServer::getWorkers(size_t npart) {
     // TODO: get the workers with lowest load from workerList
     std::vector<JasmineGraphServer::worker> *workerListAll;
@@ -866,6 +926,16 @@ std::vector<JasmineGraphServer::worker> JasmineGraphServer::getWorkers(size_t np
         cpu_loads = scaleK8s(npart);
     } else {
         workerListAll = &hostWorkerList;
+
+
+        const map<string, string> cpu_map = Utils::getMetricMap("cpu_usage");
+        // Convert strings to float
+        unordered_map<string, float> cpu_loads;
+        for (auto it = cpu_map.begin(); it != cpu_map.end(); it++) {
+            cpu_loads[it->first] = std::stof(it->second);
+            server_logger.debug(std::to_string(cpu_loads[it->first]) +" : " + std::to_string(cpu_loads[it->second]));
+        }
+
         for (auto it = hostWorkerList.begin(); it != hostWorkerList.end(); it++) {
             auto &worker = *it;
             string workerHostPort = worker.hostname + ":" + to_string(worker.port);
@@ -896,6 +966,13 @@ std::vector<JasmineGraphServer::worker> JasmineGraphServer::getWorkers(size_t np
 std::vector<JasmineGraphServer::worker> JasmineGraphServer::workers(size_t npart) {
     return getWorkers(npart);
 }
+
+// JasmineGraphServer::worker JasmineGraphServer::getDesignatedWorker()
+// {
+//     //TODO (sajeenthiran): handle designated worker
+//     return hostWorkerList[0];
+//
+// }
 
 void JasmineGraphServer::uploadGraphLocally(int graphID, const string graphType,
                                             vector<std::map<int, string>> fullFileList, std::string masterIP) {

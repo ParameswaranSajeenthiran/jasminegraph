@@ -11,12 +11,12 @@ check_pod_status() {
         echo 1
     fi
 }
-
-mkdir coverage
-kubectl apply -f ./k8s/configs.yaml
+export OMP_NUM_THREADS=1
+# mkdir coverage
+kubectl  apply -f ./k8s/configs.yaml
 kubectl apply -f ./.github/workflows/resources/unit-test-conf.yaml
 
-timeout=300 # Set the timeout in seconds (adjust as needed)
+timeout=60 # Set the timeout in seconds (adjust as needed)
 start_time=$(date +%s)
 
 while [[ $(check_pod_status) == "0" ]]; do

@@ -1,6 +1,14 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.29.6)
 project(JasmineGraph)
 set(CMAKE_CXX_STANDARD 17)
+
+# Set build type for VTune profiling if not specified
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo")
+    message(STATUS "Build type not specified, setting to RelWithDebInfo for VTune profiling")
+endif()
+
+
 
 set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
@@ -21,6 +29,7 @@ set(HEADERS globals.h
         src/frontend/core/executor/impl/StreamingTriangleCountExecutor.h
         src/frontend/core/factory/ExecutorFactory.h
         src/frontend/core/scheduler/JobScheduler.h
+        src/knowledgegraph/construction/Pipeline.h
         src/localstore/JasmineGraphHashMapLocalStore.h
         src/localstore/JasmineGraphLocalStore.h
         src/localstore/JasmineGraphLocalStoreFactory.h
@@ -96,6 +105,14 @@ set(HEADERS globals.h
         src/frontend/core/executor/impl/CypherQueryExecutor.h
         src/query/processor/cypher/runtime/Aggregation.h
         src/query/processor/cypher/runtime/AggregationFactory.h
+        src/knowledgegraph/construction/Prompt.h
+        src/knowledgegraph/construction/VLLMTupleStreamer.h
+        src/vectorStore/TextEmbedder.h
+        src/vectorStore/FaissIndex.h
+        src/query/processor/semanticBeamSearch/SemanticBeamSearch.h
+        src/frontend/core/executor/impl/SemanticBeamSearchExecutor.h
+
+
 )
 
 set(SOURCES src/backend/JasmineGraphBackend.cpp
@@ -113,6 +130,7 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/frontend/core/executor/impl/StreamingTriangleCountExecutor.cpp
         src/frontend/core/factory/ExecutorFactory.cpp
         src/frontend/core/scheduler/JobScheduler.cpp
+        src/knowledgegraph/construction/Pipeline.cpp
         src/localstore/JasmineGraphHashMapLocalStore.cpp
         src/localstore/JasmineGraphLocalStore.cpp
         src/localstore/JasmineGraphLocalStoreFactory.cpp
@@ -188,25 +206,92 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/frontend/core/executor/impl/CypherQueryExecutor.cpp
         src/query/processor/cypher/runtime/Aggregation.cpp
         src/query/processor/cypher/runtime/AggregationFactory.cpp
+        src/knowledgegraph/construction/OllamaTupleStreamer.cpp
+        src/knowledgegraph/construction/VLLMTupleStreamer.cpp
+        src/vectorStore/TextEmbedder.cpp
+        src/vectorStore/FaissIndex.cpp
+        src/query/processor/semanticBeamSearch/SemanticBeamSearch.cpp
+        src/frontend/core/executor/impl/SemanticBeamSearchExecutor.cpp
+        src/knowledgegraph/construction/VLLMTupleStreamer.cpp
+        src/knowledgegraph/construction/TupleStreamer.cpp
+
+
 
 )
 
 if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
-add_compile_options(-DUNIT_TEST)
+    add_compile_options(-DUNIT_TEST)
+    set(CMAKE_ENABLE_DEBUG ON)
 endif ()
 
+# Check for ANTLR generated files
 file(GLOB GENERATED_SRC /home/ubuntu/software/antlr/*.cpp)
+if(NOT GENERATED_SRC)
+    message(WARNING "No ANTLR generated files found in /home/ubuntu/software/antlr/")
+    set(GENERATED_SRC "")
+endif()
+
 add_library(JasmineGraphLib ${HEADERS} ${SOURCES} ${GENERATED_SRC})
 add_executable(JasmineGraph main.h main.cpp)
 
 target_compile_definitions(JasmineGraphLib PUBLIC ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/")
 
 if (CMAKE_ENABLE_DEBUG)
-    message(STATUS "DEBUG enabled")
+    message(STATUS "DEBUG mode enabled")
+    # Additional debug options for DEBUG builds
+    target_compile_options(JasmineGraphLib PRIVATE -g)
     target_compile_options(JasmineGraph PRIVATE -g)
-endif ()
 
-SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
+    # Add comprehensive debug symbols for VTune profiling
+    target_compile_options(JasmineGraph PRIVATE -g3 -fno-omit-frame-pointer)
+    target_compile_options(JasmineGraphLib PRIVATE -g3 -fno-omit-frame-pointer)
+
+    # Use DWARF-4 format for better compatibility with VTune
+    target_compile_options(JasmineGraph PRIVATE -gdwarf-4)
+    target_compile_options(JasmineGraphLib PRIVATE -gdwarf-4)
+
+    # Additional VTune profiling flags for Docker containers
+    target_compile_options(JasmineGraph PRIVATE -fasynchronous-unwind-tables)
+    target_compile_options(JasmineGraphLib PRIVATE -fasynchronous-unwind-tables)
+
+    # Ensure debug symbols are preserved in the final binary
+    target_link_options(JasmineGraph PRIVATE -g -rdynamic)
+    target_link_options(JasmineGraphLib PRIVATE -g -rdynamic)
+
+    # Force inclusion of all symbols in the binary
+    target_link_options(JasmineGraph PRIVATE -Wl,--export-dynamic)
+    target_link_options(JasmineGraphLib PRIVATE -Wl,--export-dynamic)
+
+    # Disable symbol stripping for ALL build types
+    set_target_properties(JasmineGraph PROPERTIES
+            LINK_FLAGS_RELEASE "-g -rdynamic"
+            LINK_FLAGS_RELWITHDEBINFO "-g -rdynamic"
+            LINK_FLAGS_MINSIZEREL "-g -rdynamic"
+    )
+    set_target_properties(JasmineGraphLib PROPERTIES
+            LINK_FLAGS_RELEASE "-g -rdynamic"
+            LINK_FLAGS_RELWITHDEBINFO "-g -rdynamic"
+            LINK_FLAGS_MINSIZEREL "-g -rdynamic"
+    )
+
+    # Ensure the executable links with the library and depends on it being built first
+    add_dependencies(JasmineGraph JasmineGraphLib)
+
+    # VTune profiling specific settings
+    # Export dynamic symbol table for better function name resolution
+    set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -rdynamic")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -rdynamic")
+
+    # Disable dead code elimination to preserve all symbols
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-function-sections -fno-data-sections")
+
+    # Additional flags to ensure debug symbols are preserved
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -O0")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -g3")
+
+else ()
+    SET(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,-s,--gc-sections")
+endif ()
 
 #TODO: Need to install the library separately
 target_link_libraries(JasmineGraphLib PRIVATE sqlite3)
@@ -219,14 +304,24 @@ target_link_libraries(JasmineGraphLib PRIVATE /usr/lib/x86_64-linux-gnu/libflatb
 target_link_libraries(JasmineGraphLib PRIVATE /usr/lib/x86_64-linux-gnu/libjsoncpp.so)
 target_link_libraries(JasmineGraphLib PRIVATE /usr/local/lib/libcppkafka.so)
 target_link_libraries(JasmineGraphLib PRIVATE /usr/local/libhdfs3/lib/libhdfs3.so)
+
 target_link_libraries(JasmineGraph JasmineGraphLib)
 target_link_libraries(JasmineGraph curl)
 
+#target_link_libraries(JasmineGraphLib PRIVATE OpenMP::OpenMP_CXX faiss openblas)
+target_link_libraries(JasmineGraph  OpenMP::OpenMP_CXX faiss openblas)
+find_package(OpenMP REQUIRED)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(JasmineGraph  OpenMP::OpenMP_CXX faiss)
+    #target_link_libraries(JasmineGraphLib PRIVATE  OpenMP::OpenMP_CXX)
+endif()
 include_directories(/usr/local/libhdfs3/include/hdfs/)
 include_directories(/usr/include/oneapi/)
 include_directories(/usr/local/parmetis/include/)
 include_directories(/usr/lib/x86_64-linux-gnu/openmpi/include/)
 include_directories(/usr/local/include/antlr4-runtime)
+include_directories(/usr/local/lib/faiss)
+
 link_directories(/usr/local/lib)
 include_directories(/usr/local/include/yaml-cpp)
 target_link_libraries(JasmineGraphLib PRIVATE m)
@@ -234,7 +329,12 @@ target_link_libraries(JasmineGraphLib PRIVATE /usr/local/lib/libkubernetes.so)
 target_link_libraries(JasmineGraphLib PRIVATE yaml-cpp)
 target_link_libraries(JasmineGraphLib PRIVATE curl)
 target_link_libraries(JasmineGraphLib PRIVATE antlr4-runtime)
+#target_link_libraries(JasmineGraphLib PRIVATE faiss)
 
+#target_link_libraries(JasmineGraphLib PRIVATE /usr/local/lib/llama.cpp/build/libllama.so)
+
+
+#target_link_libraries(llama)
 
 if (CMAKE_BUILD_TYPE STREQUAL "DEBUG")
     # Include google test
