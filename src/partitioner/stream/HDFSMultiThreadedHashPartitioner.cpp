@@ -20,7 +20,7 @@ Logger hash_partitioner_logger;
 HDFSMultiThreadedHashPartitioner::HDFSMultiThreadedHashPartitioner(int numberOfPartitions, int graphID,
                                                                    std::string masterIp, bool isDirected,
                                                                    std::vector<JasmineGraphServer::worker> workers,
-                                                                   bool isEmbedGraph, int partitionFileEdgeThreshold)
+                                                                   bool isEmbedGraph, int partitionFileEdgeThreshold, SQLiteDBInterface *sqllite)
     : numberOfPartitions(numberOfPartitions),
       graphId(graphID),
       partitionLocks(numberOfPartitions),
@@ -39,7 +39,8 @@ HDFSMultiThreadedHashPartitioner::HDFSMultiThreadedHashPartitioner(int numberOfP
       partitionMutexArray(numberOfPartitions),
       isDirected(isDirected),
       isEmbedGraph(isEmbedGraph),
-      partitionFileEdgeThreshold(partitionFileEdgeThreshold) {
+      partitionFileEdgeThreshold(partitionFileEdgeThreshold),
+sqlite(sqllite){
     this->outputFilePath = Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.hdfs.tempfolder") + "/" +
                            std::to_string(this->graphId);
     Utils::createDirectory(this->outputFilePath);
@@ -172,7 +173,7 @@ void HDFSMultiThreadedHashPartitioner::consumeLocalEdges(int partitionIndex, Jas
                                              this->isEmbedGraph);
                 partitionMutexArray[partitionIndex].unlock();
 
-                hash_partitioner_logger.info("Local edge consumer " + std::to_string(partitionIndex) +
+              hash_partitioner_logger.info("Local edge consumer " + std::to_string(partitionIndex) +
                                               " generated file of " +
                                               std::to_string(this->partitionFileEdgeThreshold) +
                                               " edges: " + filePath);
