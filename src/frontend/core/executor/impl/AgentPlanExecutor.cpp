@@ -169,20 +169,6 @@ void AgentPlanExecutor::execute() {
                     agent_executor_logger.info("Objective traces received");
 
                     result["objectives"] = payload["data"];
-
-                    // std::string tracesStr = payload["data"].dump(2);
-
-                    // Send to frontend
-                    // ssize_t n = write(connFd, tracesStr.c_str(), tracesStr.size());
-                    // write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
-
-                    // if (n < 0) {
-                    //     agent_executor_logger.error("Error writing objective traces to frontend socket");
-                    //     *loop_exit = true;
-                    //     close(sockfd);
-                    //     return;
-                    // }
-
                     continue;
                 }
 

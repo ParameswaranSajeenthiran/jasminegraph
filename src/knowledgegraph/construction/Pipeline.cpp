@@ -1245,29 +1245,87 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
         hostToWorkers[worker.hostname].push_back(worker);
     }
 
-    // Step 2: Convert hostnames to vector for indexing
+    std::vector<std::string> partitionWorkerMapping;
+std::unordered_map<std::string, int> workerCountMap;
+
+if (continueKGConstruction) {
+
+    kg_pipeline_stream_handler_logger.info("Loading existing partition-worker mapping");
+
+    std::string query =
+      "SELECT w.name, w.server_port, w.server_data_port, whp.partition_idpartition "
+      "FROM worker_has_partition whp "
+      "JOIN worker w ON w.idworker = whp.worker_idworker "
+      "WHERE whp.partition_graph_idgraph = " + graphId +
+      " ORDER BY whp.partition_idpartition;";
+
+    auto result = sqlite->runSelect(query);
+
+    if (result.empty()) {
+        kg_pipeline_stream_handler_logger.error("No previous partition-worker mapping found for graph " + graphId);
+        close(sockfd);
+        return false;
+    }
+
+    for (auto &row : result) {
+
+        std::string hostname = row[0].second;
+        std::string port = row[1].second;
+        std::string dataPort = row[2].second;
+
+        std::string mapping =
+            hostname + ":" +
+            port + ":" +
+            dataPort;
+
+        partitionWorkerMapping.push_back(mapping);
+
+        std::string workerKey = hostname + ":" + port;
+        workerCountMap[workerKey]++;
+
+        kg_pipeline_stream_handler_logger.info(
+            "Recovered Partition " + row[3].second +
+            " -> Worker " + mapping
+        );
+    }
+
+    if (partitionWorkerMapping.size() != numberOfPartitions) {
+        kg_pipeline_stream_handler_logger.error(
+            "Partition mismatch. Expected " +
+            std::to_string(numberOfPartitions) +
+            " partitions but found " +
+            std::to_string(partitionWorkerMapping.size())
+        );
+        close(sockfd);
+        return false;
+    }
+
+} else {
+
+    std::unordered_map<std::string, std::vector<JasmineGraphServer::worker>> hostToWorkers;
+
+    auto workerList = JasmineGraphServer::getWorkers(workerCount);
+
+    // Group workers by hostname
+    for (const auto &worker : workerList) {
+        hostToWorkers[worker.hostname].push_back(worker);
+    }
+
     std::vector<std::string> uniqueHosts;
     for (const auto &entry : hostToWorkers) {
         uniqueHosts.push_back(entry.first);
     }
 
-    std::vector<std::string> partitionWorkerMapping;
-
     int hostCount = uniqueHosts.size();
 
     for (int partitionId = 0; partitionId < numberOfPartitions; partitionId++) {
 
-        // Step 3: Round robin over hosts
         std::string selectedHost = uniqueHosts[partitionId % hostCount];
-
-        // Step 4: Pick a worker inside that host
         auto &workersOnHost = hostToWorkers[selectedHost];
 
-        // If multiple workers per machine, rotate among them
         const auto &worker =
             workersOnHost[(partitionId / hostCount) % workersOnHost.size()];
 
-        // Insert mapping
         std::string insertMapping =
             "INSERT INTO worker_has_partition "
             "(worker_idworker, partition_idpartition, partition_graph_idgraph) "
@@ -1276,11 +1334,18 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
 
         sqlite->runInsert(insertMapping);
 
-        partitionWorkerMapping.push_back(
+        std::string mapping =
             worker.hostname + ":" +
             std::to_string(worker.port) + ":" +
-            std::to_string(worker.dataPort)
-        );
+            std::to_string(worker.dataPort);
+
+        partitionWorkerMapping.push_back(mapping);
+
+        std::string workerKey =
+            worker.hostname + ":" +
+            std::to_string(worker.port);
+
+        workerCountMap[workerKey]++;
 
         kg_pipeline_stream_handler_logger.info(
             "Assigned Partition " + std::to_string(partitionId) +
@@ -1288,6 +1353,7 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
             " Worker ID " + std::to_string(worker.workerId)
         );
     }
+}
 
     // --- convert to comma-separated string ---
     std::string workersParitionMapping;
@@ -1297,7 +1363,6 @@ bool Pipeline::streamGraphToDesignatedWorker(std::string host, int port, std::st
             workersParitionMapping += ",";
         }
     }
-    std::unordered_map<std::string, int> workerCountMap;
     // Now workersParitionMapping can be sent to the worker
     kg_pipeline_stream_handler_logger.info("Partition-to-worker mapping: " + workersParitionMapping);
     // First pass: count occurrences of each worker (hostname + port)

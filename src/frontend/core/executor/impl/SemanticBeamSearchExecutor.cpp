@@ -129,11 +129,16 @@ void SemanticBeamSearchExecutor::execute() {
         readThreads.emplace_back([&, i]() {
       semantic_beam_search_logger_executor.info(
           "Starting read thread for bufferPool[" + std::to_string(i) + "]");
+            int count = 0;
       while (true) {
         std::string data = bufferPool[i]->get();
+          count++;
         semantic_beam_search_logger_executor.debug(
             "Fetched data from bufferPool[" + std::to_string(i) + "]: " + data);
         if (data == "-1") {
+            semantic_beam_search_logger_executor.info("Received " + to_string(count) + " from partition" + to_string
+                (i) );
+
           break;
         }
 

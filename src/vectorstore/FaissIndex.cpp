@@ -16,11 +16,14 @@ limitations under the License.
 #include <faiss/IndexIDMap.h>
 #include <faiss/index_io.h>
 #include <faiss/IndexIVFPQ.h>
+#include <filesystem>
 
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
-
+#include <fcntl.h>     // open
+#include <unistd.h>    // fsync, close
+#include <sys/stat.h>  // stat
 #include "../frontend/core/executor/impl/StreamingTriangleCountExecutor.h"
 #include "../util/logger/Logger.h"
 
@@ -111,31 +114,90 @@ std::vector<std::pair<faiss::idx_t, float>> FaissIndex::search(
   }
   return results;
 }
-
 void FaissIndex::save(const std::string& filepath) {
-  std::lock_guard<std::mutex> lock(fileMtx);
+    std::lock_guard<std::mutex> lock(fileMtx);
+    namespace fs = std::filesystem;
 
-  // Save FAISS index
-  faiss::write_index(index, filepath.c_str());
+    fs::path basePath(filepath);
+    fs::path dir = basePath.parent_path();
+    fs::path filename = basePath.filename();
 
-  // Save mapping alongside index (e.g., filepath + ".map")
-  std::ofstream mapFile(filepath + ".map", std::ios::binary);
-  if (!mapFile.is_open()) {
-    throw std::runtime_error("Failed to open map file for saving.");
-  }
+    // handle case: no directory (e.g., "index.faiss")
+    if (dir.empty()) {
+        dir = ".";
+    }
+    // ---- 6. Remove old backups (keep only latest) ----
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        std::string name = entry.path().filename().string();
 
-  size_t size = nodeIdToEmbeddingIdMap.size();
-  mapFile.write(reinterpret_cast<const char*>(&size), sizeof(size));
+        if (name.find(filename.string() + ".batch_") != std::string::npos &&
+            name.find(".bak") != std::string::npos) {
+            fs::remove(entry.path());
+            }
+    }
+    faiss_index_logger.info("Saving FAISS index to file: " + filepath);
+    faiss_index_logger.info("Index size: " + std::to_string(index->ntotal));
+    faiss_index_logger.info("Map size: " + std::to_string(nodeIdToEmbeddingIdMap.size()));
 
-  for (const auto& entry : nodeIdToEmbeddingIdMap) {
-    size_t keyLen = entry.first.size();
-    mapFile.write(reinterpret_cast<const char*>(&keyLen), sizeof(keyLen));
-    mapFile.write(entry.first.data(), keyLen);
-    mapFile.write(reinterpret_cast<const char*>(&entry.second),
-                  sizeof(entry.second));
-  }
+    // ---- 1. Create unique batch temp file ----
+    std::string tmpIndex = filepath + ".batch_" + std::to_string(std::time(nullptr));
+    std::string tmpMap   = tmpIndex + ".map";
 
-  mapFile.close();
+    // ---- 2. Write FAISS index to temp ----
+    faiss::write_index(index, tmpIndex.c_str());
+
+    // ---- 3. fsync index file ----
+    int fd = open(tmpIndex.c_str(), O_RDWR);
+    if (fd == -1) {
+        throw std::runtime_error("Failed to open temp index file for fsync");
+    }
+    fsync(fd);
+    close(fd);
+
+    // ---- 4. Write map file ----
+    std::ofstream mapFile(tmpMap, std::ios::binary);
+    if (!mapFile.is_open()) {
+        throw std::runtime_error("Failed to open temp map file for saving.");
+    }
+
+    size_t size = nodeIdToEmbeddingIdMap.size();
+    mapFile.write(reinterpret_cast<const char*>(&size), sizeof(size));
+
+    for (const auto& entry : nodeIdToEmbeddingIdMap) {
+        size_t keyLen = entry.first.size();
+        mapFile.write(reinterpret_cast<const char*>(&keyLen), sizeof(keyLen));
+        mapFile.write(entry.first.data(), keyLen);
+        mapFile.write(reinterpret_cast<const char*>(&entry.second),
+                      sizeof(entry.second));
+    }
+    mapFile.flush();
+
+    int mapFd = open(tmpMap.c_str(), O_RDWR);
+    fsync(mapFd);
+    close(mapFd);
+
+    mapFile.close();
+
+    // ---- 5. Atomic replace (VERY IMPORTANT) ----
+    rename(tmpIndex.c_str(), filepath.c_str());
+    rename(tmpMap.c_str(), (filepath + ".map").c_str());
+
+    // ---- 6. IMPORTANT: Keep batch files ----
+    // Since rename moved them, we need to ALSO keep a copy
+
+    std::string batchIndexBackup = tmpIndex + ".bak";
+    std::string batchMapBackup   = tmpMap + ".bak";
+
+    // Copy current main file back as batch archive
+    std::ifstream srcIdx(filepath, std::ios::binary);
+    std::ofstream dstIdx(batchIndexBackup, std::ios::binary);
+    dstIdx << srcIdx.rdbuf();
+
+    std::ifstream srcMap(filepath + ".map", std::ios::binary);
+    std::ofstream dstMap(batchMapBackup, std::ios::binary);
+    dstMap << srcMap.rdbuf();
+
+    faiss_index_logger.info("Save completed safely with batch backup.");
 }
 
 void FaissIndex::save() {
@@ -147,104 +209,100 @@ void FaissIndex::save() {
 }
 }
 void FaissIndex::load(const std::string& filepath) {
-  std::lock_guard<std::mutex> lock(mtx);
+    std::lock_guard<std::mutex> lock(mtx);
 
-  // Load FAISS index
-  std::ifstream f(filepath, std::ios::binary);
-  faiss_index_logger.info("Loading FAISS index from: " + filepath);
+    faiss_index_logger.info("Loading FAISS index from: " + filepath);
 
-  if (f.good()) {
-    faiss_index_logger.info("File exists, loading index...");
+    bool loadedSuccessfully = false;
 
+    // ---- 1. Try MAIN file ----
+    try {
+        std::ifstream f(filepath, std::ios::binary);
+        if (f.good()) {
+            faiss::Index* loaded = faiss::read_index(filepath.c_str());
+            index = dynamic_cast<faiss::IndexFlatL2*>(loaded);
 
-    faiss::Index* loaded = faiss::read_index(filepath.c_str());
-    index = dynamic_cast<faiss::IndexFlatL2*>(loaded);
-    if (!index) {
-      throw std::runtime_error("Loaded FAISS index is not L2 Flat index.");
-    }
-  } else {
-    // Create a new index if file not found
-      // int nlist = 100000;         // number of clusters (IVF)
-      // int m = 64;                 // PQ number of sub-vectors
-      // int nbits = 8;              // 8-bit quantization
-      //
-      // faiss::IndexFlatL2 quantizer(dim);
-      //
-      // faiss::IndexIVFPQ* index = new faiss::IndexIVFPQ(
-      //     &quantizer,
-      //     dim,
-      //     nlist,     // IVF clusters
-      //     m,         // number of PQ subvectors
-      //     nbits      // bits per subvector
-      // );
-      // index->use_precomputed_table = 1;
-      // index->train(num_train_vectors, train_data);
-    index = new faiss::IndexFlatL2(dim);
-  }
+            if (!index) throw std::runtime_error("Invalid index type");
 
-  faiss_index_logger.info(
-      "[FaissIndex::load] FAISS index loaded successfully.");
-
-  // Load mapping file
-  std::ifstream mapFile(filepath + ".map", std::ios::binary);
-  if (!mapFile.is_open()) {
-    faiss_index_logger.warn(
-        "[FaissIndex::load] [Warning] Mapping file not found, nodeEmbeddingMap "
-        "will be empty.");
-
-    return;
-  }
-
-  size_t size = 0;
-  if (!mapFile.read(reinterpret_cast<char*>(&size), sizeof(size))) {
-    faiss_index_logger.error("[FaissIndex::load] Failed to read mapping size.");
-    return;
-  }
-
-  for (size_t i = 0; i < size; i++) {
-    size_t keyLen = 0;
-
-    if (!mapFile.read(reinterpret_cast<char*>(&keyLen), sizeof(keyLen))) {
-      std::cerr << "[FaissIndex::load] Unexpected EOF while reading key length."
-                << std::endl;
-      break;
+            faiss_index_logger.info("Loaded MAIN index successfully");
+            loadedSuccessfully = true;
+        }
+    } catch (const std::exception& e) {
+        faiss_index_logger.warn("Main index corrupted. Trying backup...");
+        faiss_index_logger.error(e.what());
     }
 
-    // Sanity check key length
-    if (keyLen == 0 || keyLen > 1024) {
-      faiss_index_logger.warn("[FaissIndex::load] Invalid key length " +
-                              std::to_string(keyLen) + ", skipping entry.");
-      // Skip the value if key length is invalid
-      faiss::idx_t dummy;
-      if (!mapFile.read(reinterpret_cast<char*>(&dummy), sizeof(dummy))) {
-        std::cerr << "[FaissIndex::load] Unexpected EOF while skipping value."
-                  << std::endl;
-      }
-      continue;
+    // ---- 2. Try BACKUP (.bak) ----
+    if (!loadedSuccessfully) {
+        std::string backupFile = getLatestBackupFile(filepath, true);
+
+        if (!backupFile.empty()) {
+            try {
+                faiss::Index* loaded = faiss::read_index(backupFile.c_str());
+                index = dynamic_cast<faiss::IndexFlatL2*>(loaded);
+
+                if (!index) throw std::runtime_error("Invalid backup index");
+
+                faiss_index_logger.info("Recovered from BACKUP: " + backupFile);
+                loadedSuccessfully = true;
+            } catch (const std::exception& e) {
+                faiss_index_logger.warn("Backup also failed.");
+                faiss_index_logger.error(e.what());
+            }
+        }
     }
 
-    std::string key(keyLen, '\0');
-    if (!mapFile.read(&key[0], keyLen)) {
-      faiss_index_logger.debug(
-          "[FaissIndex::load] Unexpected EOF while reading key.");
-      break;
+    // ---- 3. Fallback → new index ----
+    if (!loadedSuccessfully) {
+        faiss_index_logger.error("All recovery failed. Creating new index.");
+        index = new faiss::IndexFlatL2(dim);
     }
 
-    // Remove trailing null bytes if present
-    size_t realLen = strnlen(key.c_str(), keyLen);
-    key.resize(realLen);
+    // ---- 4. Load mapping (same logic with fallback) ----
+    auto loadMap = [&](const std::string& mapPath) -> bool {
+        std::ifstream mapFile(mapPath, std::ios::binary);
+        if (!mapFile.is_open()) return false;
 
-    faiss::idx_t value = 0;
-    if (!mapFile.read(reinterpret_cast<char*>(&value), sizeof(value))) {
-      break;
+        size_t size = 0;
+        if (!mapFile.read(reinterpret_cast<char*>(&size), sizeof(size))) {
+            return false;
+        }
+
+        for (size_t i = 0; i < size; i++) {
+            size_t keyLen = 0;
+            if (!mapFile.read(reinterpret_cast<char*>(&keyLen), sizeof(keyLen)))
+                return false;
+
+            if (keyLen == 0 || keyLen > 1024) return false;
+
+            std::string key(keyLen, '\0');
+            if (!mapFile.read(&key[0], keyLen)) return false;
+
+            key.resize(strnlen(key.c_str(), keyLen));
+
+            faiss::idx_t value;
+            if (!mapFile.read(reinterpret_cast<char*>(&value), sizeof(value)))
+                return false;
+
+            nodeIdToEmbeddingIdMap[key] = value;
+            embeddingIdToNodeIdMap[value] = key;
+        }
+
+        return true;
+    };
+
+    // Try main map
+    if (!loadMap(filepath + ".map")) {
+        faiss_index_logger.warn("Main map failed. Trying backup map...");
+
+        std::string backupFile = getLatestBackupFile(filepath, false);
+        if (!backupFile.empty()) {
+            loadMap(backupFile + ".map");
+        }
     }
-    nodeIdToEmbeddingIdMap[key] = value;
-    embeddingIdToNodeIdMap[value] = key;
-  }
 
-  mapFile.close();
+    faiss_index_logger.info("Load completed.");
 }
-
 
 bool FaissIndex::isEmbeddingExist(std::string nodeId) {
     std::lock_guard<std::mutex> lock(mtx);
@@ -335,3 +393,62 @@ FaissIndex::getEmbeddingsByIds(const std::vector<std::string>& nodeIds) {
     return results;
 }
 
+std::string FaissIndex::getLatestBackupFile(const std::string& basePath, bool isIndex) {
+    namespace fs = std::filesystem;
+
+    fs::path base(basePath);
+    fs::path dir = base.parent_path();
+    std::string filename = base.filename().string();
+
+    std::vector<std::pair<long, fs::path>> candidates;
+
+    if (!fs::exists(dir)) return "";
+
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        std::string name = entry.path().filename().string();
+
+        // Must match base + batch
+        if (name.find(filename) == std::string::npos ||
+            name.find(".batch_") == std::string::npos) {
+            continue;
+            }
+
+        // 🔥 Filter by type
+        if (isIndex) {
+            // Only: *.bak (but NOT .map.bak)
+            if (!(Utils::endsWith(name, ".bak") && name.find(".map") == std::string::npos)) {
+                continue;
+            }
+        } else {
+            // Only: *.map.bak
+            if (!Utils::endsWith(name, ".map.bak")) {
+                continue;
+            }
+        }
+
+        // Extract timestamp
+        size_t pos = name.find(".batch_");
+        if (pos == std::string::npos) continue;
+
+        pos += 7;
+        size_t end = name.find('.', pos);
+
+        long ts = -1;
+        try {
+            ts = std::stol(name.substr(pos, end - pos));
+        } catch (...) {
+            continue;
+        }
+
+        candidates.emplace_back(ts, entry.path());
+    }
+
+    if (candidates.empty()) return "";
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const auto& a, const auto& b) {
+                  return a.first < b.first;
+              });
+
+    return candidates.back().second.string();
+}

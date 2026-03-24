@@ -222,6 +222,7 @@ class Utils {
   static string canonicalize(const std::string& input);
   static std::string normalizeURL(const std::string& server, const std::string& path);
   static std::vector<std::string> getUniqueLLMRunners(const std::string& hostnamePortS);
+  static  bool endsWith(const std::string& str, const std::string& suffix);
   static bool sendIntExpectResponse(int sockfd, char* data, size_t data_length, int value, std::string expectMsg);
 
   static bool sendFileChunkToWorker(std::string host, int port, int dataPort, std::string filePath,

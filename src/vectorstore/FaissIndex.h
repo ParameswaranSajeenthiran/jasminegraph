@@ -39,6 +39,7 @@ class FaissIndex {
   std::vector<float> getEmbeddingById(std::string id);
   std::string getNodeIdFromEmbeddingId(faiss::idx_t embeddingId);
   std::vector<std::vector<float>> getEmbeddingsByIds(const std::vector<std::string>& nodeIds);
+  static std::string getLatestBackupFile(const std::string& basePath, bool isIndex);
   std::string getNodeIdFromEmbeddingId(std::string embeddingId) const;
 
  private:

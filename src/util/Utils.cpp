@@ -1804,8 +1804,8 @@ bool Utils::sendQueryPlanToWorker(const std::string& host, int port, const std::
 bool Utils::sendSbsQueryPlanToWorker(std::string host, int port, std::string masterIP, int graphID, int partitionId,
                                      std::string query, SharedBuffer& sharedBuffer,
                                      const std::string& workerListString) {
-  util_logger.debug("Connecting to worker at " + host + ":" + std::to_string(port));
-  util_logger.debug(
+  util_logger.info("Connecting to worker at " + host + ":" + std::to_string(port));
+  util_logger.info(
       "Parameters: host=" + host + ", port=" + std::to_string(port) +
       ", masterIP=" + masterIP + ", graphID=" + std::to_string(graphID) +
       ", partitionId=" + std::to_string(partitionId) + ", query=" + query);
@@ -2579,4 +2579,9 @@ std::vector<std::string> Utils::getUniqueLLMRunners(const std::string& hostnameP
     }
 
     return llmRunnerServers;
+}
+
+bool  Utils:: endsWith(const std::string& str, const std::string& suffix) {
+    return str.size() >= suffix.size() &&
+           str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 }

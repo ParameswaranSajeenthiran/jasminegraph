@@ -49,8 +49,7 @@ Guidelines:
 - Be concise, factual, and directly answer the query.
 - Do not mention graph structure, node IDs, partition IDs, or scores in the final response.
 
-Output:
-Provide a clear and complete answer to the User Query based on the Retrieved Data.
+Provide Answer in a short phrase only. Do not explain.
 )";
 
 Responder::Responder(const std::string& model, const std::string& host, const std::string& engine)

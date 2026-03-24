@@ -162,7 +162,7 @@ void JasmineGraphIncrementalLocalStore::getAndStoreEmbeddings() {
         }
         faissNodeStore->save();
         faissEdgeStore->save();
-        incremental_localstore_logger.debug(
+        incremental_localstore_logger.info(
             "Embedding thread exiting cleanly for Partition: " +
             std::to_string(gc.partitionID));
     } catch (const std::exception &e) {
@@ -448,9 +448,11 @@ incremental_localstore_logger.debug("Adding source properties: " + sourceJson.du
           strcpy(label, it.value().get<std::string>().c_str());
           relationBlock->getSource()->addLabel(&label[0]);
          }
-          if (it.key() != "id") {
+          if (it.key() == "label" || it.key() == "name" || it.key() == "when" || it.key() == "where"  || it.key() ==
+             "type" ) {
               textForEmbedding << value << "\n";
-          }
+             }
+
           relationBlock->getSource()->addProperty(std::string(it.key()),
                                                      &value[0]);
       }
@@ -491,7 +493,8 @@ void JasmineGraphIncrementalLocalStore::addDestinationProperties(
           strcpy(label, it.value().get<std::string>().c_str());
           relationBlock->getDestination()->addLabel(&label[0]);
         }
-          if (it.key() != "id") {
+          if (it.key() == "label" || it.key() == "name" || it.key() == "when" || it.key() == "where"  || it.key() ==
+              "type" ) {
               textForEmbedding << value << "\n";
           }
               relationBlock->getDestination()->addProperty(std::string(it.key()),

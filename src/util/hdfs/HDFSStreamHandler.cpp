@@ -109,6 +109,7 @@ void HDFSStreamHandler::streamFromHDFSIntoBuffer() {
 
 void HDFSStreamHandler::streamFromBufferToProcessingQueueEdgeListGraph(HDFSMultiThreadedHashPartitioner &partitioner) {
     auto startTime = high_resolution_clock::now();
+    Partitioner fennelPartitioner(numberOfPartitions, graphId,  spt::FENNEL, sqlite,  true);
 
     while (isProcessing) {
         std::unique_lock<std::mutex> lock(dataBufferMutex);
@@ -138,7 +139,6 @@ void HDFSStreamHandler::streamFromBufferToProcessingQueueEdgeListGraph(HDFSMulti
                 std::string destId = tokens[1];
 
                 try {
-                    Partitioner fennelPartitioner(numberOfPartitions, graphId,  spt::FENNEL, sqlite,  true);
                     partitionedEdge partitioned_edge = fennelPartitioner.addEdge({sourceId, destId});
                     int sourceIndex =  partitioned_edge[0].second;
                     int destIndex =  partitioned_edge[1].second;
@@ -199,6 +199,7 @@ void HDFSStreamHandler::streamFromBufferToProcessingQueueEdgeListGraph(HDFSMulti
 
 void HDFSStreamHandler::streamFromBufferToProcessingQueuePropertyGraph(HDFSMultiThreadedHashPartitioner &partitioner) {
     auto startTime = high_resolution_clock::now();
+    Partitioner fennelPartitioner(numberOfPartitions, graphId,  spt::FENNEL, sqlite,  true);
 
     while (isProcessing) {
         std::unique_lock<std::mutex> lock(dataBufferMutex);
@@ -225,8 +226,19 @@ void HDFSStreamHandler::streamFromBufferToProcessingQueuePropertyGraph(HDFSMulti
                 std::string destinationId = destination["id"];
 
                 if (!sourceId.empty() && !destinationId.empty()) {
-                    int sourceIndex = std::stoi(sourceId) % this->numberOfPartitions;
-                    int destIndex = std::stoi(destinationId) % this->numberOfPartitions;
+                    partitionedEdge partitioned_edge;
+
+                    {
+                        partitioned_edge = fennelPartitioner.addEdge({
+                            source["id"].get<std::string>(),
+                            destination["id"].get<std::string>()
+                        });
+                    }
+                    //                             partitionedEdge partitioned_edge = partitioner.addEdge({
+                    //                             source["id"].get<std::string>(), destination["id"].get<std::string>()});
+                    int sourceIndex =  partitioned_edge[0].second;
+                    int destIndex =  partitioned_edge[1].second;
+
 
                     source["pid"] = sourceIndex;
                     destination["pid"] = destIndex;
@@ -278,8 +290,93 @@ void HDFSStreamHandler::startStreamingFromBufferToPartitions() {
     const string isEmbedGraph = Utils::getJasmineGraphProperty("org.jasminegraph.vectorstore.enabled");
 
     HDFSMultiThreadedHashPartitioner partitioner(numberOfPartitions, graphId, masterIP, isDirected, workers,
-        false, 1000, this->sqlite);
+        isEmbedGraph == "true" , 1000, this->sqlite);
 
+    std::atomic<bool> persistRunning(true);
+
+    std::thread persistThread([&]() {
+        while (persistRunning.load()) {
+
+            std::this_thread::sleep_for(std::chrono::seconds(5)); // tune this
+
+            long vertices = partitioner.getVertexCount();
+            long edges = partitioner.getEdgeCount();
+
+            std::string sqlStatement =
+                "UPDATE graph SET vertexcount = '" + std::to_string(vertices) +
+                "', edgecount = '" + std::to_string(edges) +
+                "' WHERE idgraph = '" + std::to_string(this->graphId) + "'";
+
+            dbLock.lock();
+            sqlite->runUpdate(sqlStatement);
+            dbLock.unlock();
+
+            hdfs_stream_handler_logger.info(
+                "Periodic persist: V=" + std::to_string(vertices) +
+                " E=" + std::to_string(edges));
+        }
+    });
+
+    std::unordered_map<std::string, std::vector<JasmineGraphServer::worker>> hostToWorkers;
+
+    auto workerList = JasmineGraphServer::getWorkers(numberOfPartitions);
+
+    // Step 1: Group workers by hostname
+    for (const auto &worker : workerList) {
+        hostToWorkers[worker.hostname].push_back(worker);
+    }
+
+    std::vector<std::string> partitionWorkerMapping;
+    std::unordered_map<std::string, int> workerCountMap;
+
+
+    // Group workers by hostname
+    for (const auto &worker : workerList) {
+        hostToWorkers[worker.hostname].push_back(worker);
+    }
+
+    std::vector<std::string> uniqueHosts;
+    for (const auto &entry : hostToWorkers) {
+        uniqueHosts.push_back(entry.first);
+    }
+
+    int hostCount = uniqueHosts.size();
+
+    for (int partitionId = 0; partitionId < numberOfPartitions; partitionId++) {
+
+        std::string selectedHost = uniqueHosts[partitionId % hostCount];
+        auto &workersOnHost = hostToWorkers[selectedHost];
+
+        const auto &worker =
+            workersOnHost[(partitionId / hostCount) % workersOnHost.size()];
+
+        std::string insertMapping =
+            "INSERT INTO worker_has_partition "
+            "(worker_idworker, partition_idpartition, partition_graph_idgraph) "
+            "VALUES (" + std::to_string(worker.workerId) + ", " +
+            std::to_string(partitionId) + ", " + to_string(graphId) + ");";
+        dbLock.lock();
+        sqlite->runInsert(insertMapping);
+        dbLock.unlock();
+        std::string mapping =
+            worker.hostname + ":" +
+            std::to_string(worker.port) + ":" +
+            std::to_string(worker.dataPort);
+
+        partitionWorkerMapping.push_back(mapping);
+
+        std::string workerKey =
+            worker.hostname + ":" +
+            std::to_string(worker.port);
+
+        workerCountMap[workerKey]++;
+
+        hdfs_stream_handler_logger.info(
+            "Assigned Partition " + std::to_string(partitionId) +
+            " to Host " + worker.hostname +
+            " Worker ID " + std::to_string(worker.workerId)
+        );
+    }
     std::thread readerThread(&HDFSStreamHandler::streamFromHDFSIntoBuffer, this);
     std::vector<std::thread> bufferProcessorThreads;
 
@@ -299,7 +396,8 @@ void HDFSStreamHandler::startStreamingFromBufferToPartitions() {
     for (auto &thread : bufferProcessorThreads) {
         thread.join();
     }
-
+    persistRunning.store(false);
+    persistThread.join();
     long vertices = partitioner.getVertexCount();
     long edges = partitioner.getEdgeCount();
 
@@ -314,6 +412,7 @@ void HDFSStreamHandler::startStreamingFromBufferToPartitions() {
     dbLock.unlock();
 
     partitioner.updatePartitionTable();
+    partitioner.stopConsumerThreads();
 
     auto endTime = high_resolution_clock::now();
     std::chrono::duration<double> duration = endTime - startTime;
