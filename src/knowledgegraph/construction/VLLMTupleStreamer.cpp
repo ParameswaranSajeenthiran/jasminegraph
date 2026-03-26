@@ -134,16 +134,19 @@ size_t VLLMTupleStreamer::StreamCallback(char* ptr, size_t size, size_t nmemb,
                                               {"properties",
                                                {{"id", subject_id},
                                                 {"label", subject_type},
-                                                {"name", subject}}}}},
+                                                {"name", subject},
+                                               {"chunk_id", ctx->chunkKey}}}}},
                                             {"destination",
                                              {{"id", object_id},
                                               {"properties",
                                                {{"id", object_id},
                                                 {"label", object_type},
-                                                {"name", object}}}}},
+                                                {"name", object},
+                                               {"chunk_id", ctx->chunkKey}}}}},
                                             {"properties",
                                              {{"id", edge_id},
-                                              {"type", predicate}}}};
+                                              {"type", predicate},
+                                             {"chunk_id", ctx->chunkKey}}}};
 
                                         if (triple.size() == 6) {
                                             formattedTriple["properties"]["when"] = triple[5].get<std::string>();

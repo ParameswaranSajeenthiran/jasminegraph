@@ -37,6 +37,8 @@ SemanticBeamSearch::SemanticBeamSearch(
       k(k),
       gc(gc),
       workerList(workerList), nodeManager(nodeManager) {
+    this->chunkStore =  new ChunkStore(nodeManager->getDbPrefix()+ "_chunk_store");
+
   // Constructor implementation
   semantic_beam_search_logger.debug(
       "SemanticBeamSearch initialized with k: " + std::to_string(k) +
@@ -66,6 +68,7 @@ std::vector<ScoredPath> SemanticBeamSearch::getSeedNodes() {
       json initialPath;
       initialPath["pathNodes"] = json::array();
         set<string> pathNodeIds;
+        set<string> pathChunkIds;
       json nodeData;
       nodeData["partitionID"] =
           std::string(seedNode->getMetaPropertyHead()->value);
@@ -86,6 +89,18 @@ std::vector<ScoredPath> SemanticBeamSearch::getSeedNodes() {
         if (score < 0.55) {
             continue;
         }
+        initialPath["chunks"] = json::array();
+        if (nodeData.contains("chunk_node_id") &&
+    !nodeData["chunk_node_id"].is_null()) {
+
+            string chunkId = nodeData["chunk_node_id"].get<std::string>();
+            semantic_beam_search_logger.debug("Fetching related chunkId: "  + chunkId);
+            pathChunkIds.insert(chunkId);
+            json chunkData;
+          chunkData["name"] = this->chunkStore->readChunk(gc.graphID, gc.partitionID, stoi(chunkId));
+            chunkData["id"] = chunkId;
+            initialPath["chunks"].push_back(chunkData);
+        }
         HopTrace seedTrace;
         seedTrace.hop = 0;
         seedTrace.expandedFromNode = "QUERY";
@@ -94,7 +109,9 @@ std::vector<ScoredPath> SemanticBeamSearch::getSeedNodes() {
         seedTrace.nodeScore = score;
         seedTrace.relationScore = 0.0f;
         seedTrace.cumulativeScore = score;
-      paths.push_back({pathId, initialPath, pathNodeIds, pathRelIds, score , {seedTrace}});
+        semantic_beam_search_logger.debug("Pushing seed node " );
+
+      paths.push_back({pathId, initialPath, pathChunkIds, pathNodeIds, pathRelIds, score , {seedTrace}});
         pathId++;
         string displayName;
         if (nodeData.contains("name")) {
@@ -102,7 +119,7 @@ std::vector<ScoredPath> SemanticBeamSearch::getSeedNodes() {
         } else {
             displayName = nodeData["id"].get<std::string>();
         }
-      semantic_beam_search_logger.debug("Seed node: " + nodeData["name"].get<std::string>() +
+      semantic_beam_search_logger.debug("Seed node: " + displayName +
           ", Distance: " +to_string(dist));
     }
   } catch (std::exception& e) {
@@ -167,6 +184,7 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
         int pathId = sp.pathId;
         auto pathNodeIds = sp.pathNodeIds;
         auto pathRelIds = sp.pathRelIds;
+        auto pathChunkIds = sp.pathChunkIds;
       float score = sp.score;
        vector<HopTrace> pathTrace = sp.hopTraces;
       semantic_beam_search_logger.debug("Current path object: " +
@@ -214,6 +232,8 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
         while (relation) {
           auto newPathNodeIds = pathNodeIds;
           auto newPathRelIds  = pathRelIds;
+
+            auto newPathChunkIds =  pathChunkIds;
           relCount++;
           semantic_beam_search_logger.debug("Expanding relation #" +
                                             std::to_string(relCount));
@@ -245,6 +265,7 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
 
           // Create new path
           json newPath = currentPath;
+
           json relData;
             relData["direction"] = direction;
           auto relProps = relation->getAllProperties();
@@ -323,9 +344,25 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
             auto newHopTraces = sp.hopTraces;
             newHopTraces.push_back(trace);
 
+
+            string chunkId = nodeData["chunk_node_id"].get<std::string>();
+
+            if (nodeData.contains("chunk_node_id") &&
+               !nodeData["chunk_node_id"].is_null()) {
+
+                string chunkId = nodeData["chunk_node_id"].get<std::string>();
+                semantic_beam_search_logger.debug("Fetching related chunkId: "  + chunkId);
+                pathChunkIds.insert(chunkId);
+                json chunkData;
+                chunkData["name"] = this->chunkStore->readChunk(gc.graphID, gc.partitionID, stoi(chunkId));
+                chunkData["id"] = chunkId;
+                newPath["chunks"].push_back(chunkData);
+               }
+
             expandedPaths.push_back({
                 sp.pathId,
                 newPath,
+            newPathChunkIds,
                 newPathNodeIds,
                 newPathRelIds,
                 newScore,
@@ -359,6 +396,8 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
         while (relation) {
             auto newPathNodeIds = pathNodeIds;
             auto newPathRelIds  = pathRelIds;
+            auto newPathChunkIds = pathChunkIds;
+
             relCount++;
             semantic_beam_search_logger.debug("Expanding relation #" +
                                             std::to_string(relCount));
@@ -457,10 +496,24 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
 
             auto newHopTraces = sp.hopTraces;
             newHopTraces.push_back(trace);
+            if (nodeData.contains("chunk_node_id") &&
+    !nodeData["chunk_node_id"].is_null()) {
+                string chunkId = nodeData["chunk_node_id"].get<std::string>();
+                semantic_beam_search_logger.debug("Fetching related chunkId: "  + chunkId);
+                pathChunkIds.insert(chunkId);
+                json chunkData;
+                chunkData["name"] = this->chunkStore->readChunk(gc.graphID, gc.partitionID, stoi(chunkId));
+                chunkData["id"] = chunkId;
+                    newPath["chunks"].push_back(chunkData);
+            }
+
+            
+
 
             expandedPaths.push_back({
                 sp.pathId,
                 newPath,
+            newPathChunkIds,
                 newPathNodeIds,
                 newPathRelIds,
                 newScore,
@@ -512,6 +565,7 @@ void SemanticBeamSearch::semanticMultiHopBeamSearch(SharedBuffer& buffer,
         float total = hop;
         spJson["score"] = sp.score/total;
         spJson["pathObj"] = sp.pathObj;
+
           spJson["hop"] = hop;
           semantic_beam_search_logger.debug("Adding terminal:" + spJson.dump());
         buffer.add(spJson.dump());
@@ -768,6 +822,7 @@ json SemanticBeamSearch::callRemoteExpansion(
     spJson["score"] = sp.score;
       spJson["pathNodeIds"] = sp.pathNodeIds;
       spJson["pathRelsIds"] = sp.pathRelIds;
+      spJson["pathChunkIds"] = sp.pathChunkIds;
       json hopTracesJson = json::array();
       for (const auto& h : sp.hopTraces) {
           json hJson;
@@ -828,6 +883,7 @@ json SemanticBeamSearch::callRemoteExpansion(
     float score_ = expanded["score"];
       set<string> pathNodeIds = expanded["pathNodeIds"];
       set<string> pathRelsIds = expanded["pathRelIds"];
+      set<string> pathChunkIds = expanded["pathChunkIds"];
       vector<HopTrace> hopTraces;
       for (const auto& h : expanded["hopTraces"]) {
           HopTrace trace;
@@ -859,7 +915,7 @@ json SemanticBeamSearch::callRemoteExpansion(
         }
       }
 
-      expandedPaths.push_back({pathId, expanded["pathObj"], pathNodeIds, pathRelsIds,
+      expandedPaths.push_back({pathId, expanded["pathObj"], pathChunkIds, pathNodeIds, pathRelsIds,
           score_, hopTraces});
     } else {
       if (score_ > (hop - 1) * 2 + 1) buffer.add(expanded["pathObj"].dump());

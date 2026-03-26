@@ -27,6 +27,11 @@ struct Chunk {
     int64_t chunk_size;
 };
 
+struct Node {
+    long id;
+    int partition;
+};
+
 class Pipeline {
  public:
     Pipeline(hdfsFS fileSystem, const std::string& filePath, int numberOfPartitions, int graphId,
@@ -118,10 +123,11 @@ class Pipeline {
     int64_t bytes_read_so_far = 0;
     int64_t realtime_bytes_read_so_far = 0;
     bool stopFlag = false;
-    std::unordered_map<std::string, long> nodeIndex;
+    std::unordered_map<std::string, Node> nodeIndex;
     std::unordered_map<std::string, long> edgeIndex;
 
-    unsigned int nextNodeIndex = 0;
+     std::atomic<long>  nextNodeIndex {0};;
+        std::atomic<long>  nextChunkId {0};;
     unsigned int nextEdgeIndex = 0;
     std::mutex entityResolutionMutex;
 

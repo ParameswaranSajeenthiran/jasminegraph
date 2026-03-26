@@ -115,6 +115,7 @@ set(HEADERS globals.h
         src/localstore/incremental/JasmineGraphIncrementalLocalStore.cpp
         src/frontend/core/executor/impl/AgentPlanExecutor.h
         src/rag/agent/Agent.h
+        src/rag/chunkstore/ChunkStore.h
         src/rag/agent/Planner.h
         src/rag/agent/AgentProtocol.h
         src/rag/agent/PlanTypes.h
@@ -230,6 +231,7 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/localstore/incremental/JasmineGraphIncrementalLocalStore.cpp
         src/frontend/core/executor/impl/AgentPlanExecutor.cpp
         src/rag/agent/Agent.cpp
+        src/rag/chunkstore/ChunkStore.cpp
         src/rag/agent/Planner.cpp
         src/rag/agent/AgentProtocol.cpp
         src/rag/agent/PlanDecoder.cpp
@@ -252,7 +254,9 @@ if(NOT GENERATED_SRC)
     set(GENERATED_SRC ""
             src/frontend/JasmineGraphFrontEnd.cpp
             src/localstore/incremental/JasmineGraphIncrementalLocalStore.cpp
-            src/frontend/JasmineGraphFrontEnd.cpp)
+            src/frontend/JasmineGraphFrontEnd.cpp
+            src/rag/chunkstore/ChunkStore.cpp
+            src/rag/chunkstore/ChunkStore.h)
 endif()
 
 add_library(JasmineGraphLib ${HEADERS} ${SOURCES} ${GENERATED_SRC}

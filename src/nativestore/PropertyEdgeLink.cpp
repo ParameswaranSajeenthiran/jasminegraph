@@ -93,58 +93,92 @@ PropertyEdgeLink::PropertyEdgeLink(unsigned int blockAddress, std::string name, 
 unsigned int PropertyEdgeLink::insert(std::string name, char* value) {
     char dataName[PropertyEdgeLink::MAX_NAME_SIZE] = {0};
     char dataValue[PropertyEdgeLink::MAX_VALUE_SIZE] = {0};
+
+    // Safe copy for name
     std::strncpy(dataName, name.c_str(), PropertyEdgeLink::MAX_NAME_SIZE - 1);
     dataName[PropertyEdgeLink::MAX_NAME_SIZE - 1] = '\0';
+
+    // Safe copy for value (binary-safe but bounded)
     size_t len = std::min(strlen(value), (size_t)PropertyEdgeLink::MAX_VALUE_SIZE - 1);
     std::memcpy(dataValue, value, len);
     dataValue[len] = '\0';
 
-    property_edge_link_logger.debug("Received name = " + name);
-    property_edge_link_logger.debug("Received value = " + std::string(value));
+    PropertyEdgeLink* current = this;
+    PropertyEdgeLink* prev = nullptr;
+
+    // 🔁 ITERATIVE traversal (replaces recursion)
+    while (current != nullptr) {
+        if (current->name == name) {
+            property_edge_link_logger.warn("Property key/name already exists key = " + name);
+            return current->blockAddress;
+        }
+
+        if (current->nextPropAddress == 0) {
+            prev = current;
+            break;
+        }
+
+        prev = current;
+
+        // ⚠️ Avoid memory leak from next()
+        PropertyEdgeLink* nextNode = current->next();
+        if (current != this) {
+            delete current;
+        }
+        current = nextNode;
+    }
+
     unsigned int nextAddress = 0;
 
-    // property_edge_link_logger.info("current property name  = " + (this->name));
-    // property_edge_link_logger.info("new property name  = " + (name));
+    pthread_mutex_lock(&lockInsertPropertyEdgeLink);
 
-    if (this->name == name) {
-        // TODO[tmkasun]: update existing property value
-        property_edge_link_logger.warn("Property key/name already exist key = " + std::string(name));
-        return this->blockAddress;
-    } else if (this->nextPropAddress) {  // Traverse to the edge/end of the link list
-        std::unique_ptr<PropertyEdgeLink> pel(new PropertyEdgeLink(this->nextPropAddress));
-        return pel->insert(name, value);
-    } else {  // No next link means end of the link, Now add the new link
-              //        property_edge_link_logger.debug("Next prop index = " +
-              //        std::to_string(PropertyEdgeLink::nextPropertyIndex));
+    unsigned int newAddress =
+        PropertyEdgeLink::nextPropertyIndex * PropertyEdgeLink::PROPERTY_BLOCK_SIZE;
 
-        pthread_mutex_lock(&lockInsertPropertyEdgeLink);
-        unsigned int newAddress = PropertyEdgeLink::nextPropertyIndex * PropertyEdgeLink::PROPERTY_BLOCK_SIZE;
-        this->edgePropertiesDB->seekp(newAddress);
-        this->edgePropertiesDB->write(dataName, PropertyEdgeLink::MAX_NAME_SIZE);
-        this->edgePropertiesDB->write(reinterpret_cast<char*>(dataValue), PropertyEdgeLink::MAX_VALUE_SIZE);
-        if (!this->edgePropertiesDB->write(reinterpret_cast<char*>(&nextAddress), sizeof(nextAddress))) {
-            property_edge_link_logger.error("Error while inserting a property " + name + " into block address " +
-                                            std::to_string(newAddress));
-            return -1;
-        }
+    // Write new node
+    PropertyEdgeLink::edgePropertiesDB->seekp(newAddress);
+    PropertyEdgeLink::edgePropertiesDB->write(dataName, PropertyEdgeLink::MAX_NAME_SIZE);
+    PropertyEdgeLink::edgePropertiesDB->write(reinterpret_cast<char*>(dataValue),
+                                              PropertyEdgeLink::MAX_VALUE_SIZE);
 
-        this->nextPropAddress = newAddress;
-        this->edgePropertiesDB->seekp(this->blockAddress + PropertyEdgeLink::MAX_NAME_SIZE +
-                                      PropertyEdgeLink::MAX_VALUE_SIZE);  // seek to current property next address
-        if (!this->edgePropertiesDB->write(reinterpret_cast<char*>(&newAddress), sizeof(newAddress))) {
-            property_edge_link_logger.error("Error while updating  property next address for " + name +
-                                            " into block address " + std::to_string(this->blockAddress));
-            return -1;
-        }
-        this->edgePropertiesDB->flush();
-        property_edge_link_logger.debug("nextPropertyIndex = " +
-        std::to_string(PropertyEdgeLink::nextPropertyIndex));
-        PropertyEdgeLink::nextPropertyIndex++;  // Increment the shared property index value
+    if (!PropertyEdgeLink::edgePropertiesDB->write(reinterpret_cast<char*>(&nextAddress),
+                                                   sizeof(nextAddress))) {
+        property_edge_link_logger.error("Error inserting property " + name +
+                                       " into block " + std::to_string(newAddress));
         pthread_mutex_unlock(&lockInsertPropertyEdgeLink);
-        return this->blockAddress;
+        return 0;
     }
-}
 
+    // Update previous node's next pointer
+    if (prev != nullptr) {
+        prev->nextPropAddress = newAddress;
+
+        PropertyEdgeLink::edgePropertiesDB->seekp(
+            prev->blockAddress +
+            PropertyEdgeLink::MAX_NAME_SIZE +
+            PropertyEdgeLink::MAX_VALUE_SIZE);
+
+        if (!PropertyEdgeLink::edgePropertiesDB->write(
+                reinterpret_cast<char*>(&newAddress), sizeof(newAddress))) {
+            property_edge_link_logger.error("Error updating next pointer for block " +
+                                            std::to_string(prev->blockAddress));
+            pthread_mutex_unlock(&lockInsertPropertyEdgeLink);
+            return 0;
+        }
+    }
+
+    PropertyEdgeLink::edgePropertiesDB->flush();
+    PropertyEdgeLink::nextPropertyIndex++;
+
+    pthread_mutex_unlock(&lockInsertPropertyEdgeLink);
+
+    // Cleanup last allocated node (if not head)
+    if (current != nullptr && current != this) {
+        delete current;
+    }
+
+    return this->blockAddress;
+}
 /**
  * Create a brand new property link to an empty node block
  *

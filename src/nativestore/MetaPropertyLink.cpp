@@ -59,49 +59,81 @@ MetaPropertyLink::MetaPropertyLink(unsigned int blockAddress, std::string name,
 unsigned int MetaPropertyLink::insert(std::string name, const char* value) {
     char dataName[MetaPropertyLink::MAX_NAME_SIZE] = {0};
     char dataValue[MetaPropertyLink::MAX_VALUE_SIZE] = {0};
-    std::strcpy(dataName, name.c_str());
-    std::memcpy(dataValue, value,
-                MetaPropertyLink::MAX_VALUE_SIZE);
+
+    std::strncpy(dataName, name.c_str(), MetaPropertyLink::MAX_NAME_SIZE - 1);
+    dataName[MetaPropertyLink::MAX_NAME_SIZE - 1] = '\0';
+    std::memcpy(dataValue, value, MetaPropertyLink::MAX_VALUE_SIZE);
+
+    MetaPropertyLink* current = this;
+    MetaPropertyLink* prev = nullptr;
+
+    // 🔁 Iterative traversal instead of recursion
+    while (current != nullptr) {
+        if (current->name == name) {
+            // Update existing property
+            pthread_mutex_lock(&lockInsertMetaPropertyLink);
+            current->metaPropertiesDB->seekp(current->blockAddress + MetaPropertyLink::MAX_NAME_SIZE);
+            current->metaPropertiesDB->write(reinterpret_cast<char*>(dataValue),
+                                             MetaPropertyLink::MAX_VALUE_SIZE);
+            current->metaPropertiesDB->flush();
+            pthread_mutex_unlock(&lockInsertMetaPropertyLink);
+            meta_property_link_logger.debug("Updating existing property key = " + name);
+            return current->blockAddress;
+        }
+
+        if (current->nextPropAddress == 0) {
+            prev = current;
+            break;
+        }
+
+        prev = current;
+
+        MetaPropertyLink* nextNode = current->next();
+        if (current != this) delete current; // avoid memory leak
+        current = nextNode;
+    }
 
     unsigned int nextAddress = 0;
+    pthread_mutex_lock(&lockInsertMetaPropertyLink);
 
-    if (this->name == name) {
-        pthread_mutex_lock(&lockInsertMetaPropertyLink);
-        this->metaPropertiesDB->seekp(this->blockAddress + MetaPropertyLink::MAX_NAME_SIZE);
-        this->metaPropertiesDB->write(reinterpret_cast<char*>(dataValue), MetaPropertyLink::MAX_VALUE_SIZE);
-        this->metaPropertiesDB->flush();
+    unsigned int newAddress = MetaPropertyLink::nextPropertyIndex * MetaPropertyLink::META_PROPERTY_BLOCK_SIZE;
+
+    // Write new property
+    MetaPropertyLink::metaPropertiesDB->seekp(newAddress);
+    MetaPropertyLink::metaPropertiesDB->write(dataName, MetaPropertyLink::MAX_NAME_SIZE);
+    MetaPropertyLink::metaPropertiesDB->write(reinterpret_cast<char*>(dataValue),
+                                              MetaPropertyLink::MAX_VALUE_SIZE);
+    if (!MetaPropertyLink::metaPropertiesDB->write(reinterpret_cast<char*>(&nextAddress),
+                                                   sizeof(nextAddress))) {
+        meta_property_link_logger.error("Error while inserting property " + name +
+                                       " into block address " + std::to_string(newAddress));
         pthread_mutex_unlock(&lockInsertMetaPropertyLink);
-        meta_property_link_logger.debug("Updating already existing property key = " + std::string(name));
-        return this->blockAddress;
-    } else if (this->nextPropAddress) {  // Traverse to the edge/end of the link list
-        return this->next()->insert(name, value);
-    } else {
-        pthread_mutex_lock(&lockInsertMetaPropertyLink);
-        unsigned int newAddress = MetaPropertyLink::nextPropertyIndex * MetaPropertyLink::META_PROPERTY_BLOCK_SIZE;
-        this->metaPropertiesDB->seekp(newAddress);
-        this->metaPropertiesDB->write(dataName, MetaPropertyLink::MAX_NAME_SIZE);
-        this->metaPropertiesDB->write(reinterpret_cast<char*>(dataValue), MetaPropertyLink::MAX_VALUE_SIZE);
-        if (!this->metaPropertiesDB->write(reinterpret_cast<char*>(&nextAddress), sizeof(nextAddress))) {
-            meta_property_link_logger.error("Error while inserting a property " + name + " into block address " +
-                                       std::to_string(newAddress));
-            return -1;
-        }
-
-        this->metaPropertiesDB->flush();
-
-        this->nextPropAddress = newAddress;
-        this->metaPropertiesDB->seekp(this->blockAddress + MetaPropertyLink::MAX_NAME_SIZE +
-                                  MetaPropertyLink::MAX_VALUE_SIZE);  // seek to current property next address
-        if (!this->metaPropertiesDB->write(reinterpret_cast<char*>(&newAddress), sizeof(newAddress))) {
-            meta_property_link_logger.error("Error while updating  property next address for " + name +
-                                       " into block address " + std::to_string(this->blockAddress));
-            return -1;
-        }
-
-        MetaPropertyLink::nextPropertyIndex++;  // Increment the shared property index value
-        pthread_mutex_unlock(&lockInsertMetaPropertyLink);
-        return this->blockAddress;
+        return 0;
     }
+
+    // Update previous node's next pointer
+    if (prev != nullptr) {
+        prev->nextPropAddress = newAddress;
+        MetaPropertyLink::metaPropertiesDB->seekp(prev->blockAddress +
+                                                  MetaPropertyLink::MAX_NAME_SIZE +
+                                                  MetaPropertyLink::MAX_VALUE_SIZE);
+        if (!MetaPropertyLink::metaPropertiesDB->write(reinterpret_cast<char*>(&newAddress),
+                                                       sizeof(newAddress))) {
+            meta_property_link_logger.error("Error updating next address for block " +
+                                           std::to_string(prev->blockAddress));
+            pthread_mutex_unlock(&lockInsertMetaPropertyLink);
+            return 0;
+        }
+    }
+
+    MetaPropertyLink::metaPropertiesDB->flush();
+    MetaPropertyLink::nextPropertyIndex++;
+
+    pthread_mutex_unlock(&lockInsertMetaPropertyLink);
+
+    if (current != nullptr && current != this) delete current;
+
+    return this->blockAddress;
 }
 
 MetaPropertyLink* MetaPropertyLink::create(std::string name, const char* value) {

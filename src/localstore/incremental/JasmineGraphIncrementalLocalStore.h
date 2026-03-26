@@ -15,6 +15,7 @@ limitations under the License.
 #include <nlohmann/json.hpp>
 #include <string>
 
+#include "../../rag/chunkstore/ChunkStore.h"
 #include "../../vectorstore/FaissIndex.h"
 #include "../../vectorstore/TextEmbedder.h"
 using json = nlohmann::json;
@@ -35,6 +36,7 @@ class JasmineGraphIncrementalLocalStore {
     FaissIndex* faissNodeStore;
     FaissIndex* faissEdgeStore;
     TextEmbedder* textEmbedder;
+        ChunkStore* chunkStore;
     std::unique_ptr<unordered_map<string, string>> node_embedding_requests;
     std::unique_ptr<set<string>> edge_embedding_requests;
     bool processing_done = false;

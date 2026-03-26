@@ -3689,6 +3689,8 @@ static void streaming_tuple_extraction(
   std::condition_variable dataBufferCV;
   std::mutex dataBufferMutex;
   while (true) {
+
+
     std::string command =
         Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
 
@@ -3702,6 +3704,9 @@ static void streaming_tuple_extraction(
     }
     Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
 
+      std::string chunkId =
+    Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
+      Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
     int content_length;
     recv(connFd, &content_length, sizeof(int), 0);
     content_length = ntohl(content_length);
@@ -3840,7 +3845,7 @@ if (tuple_id > 0) {
       }
     });
 
-    streamer->streamChunk("chunk1", chunk, tupleBuffer);
+    streamer->streamChunk(chunkId, chunk, tupleBuffer);
     consumer.join();
   }
 }
@@ -5616,7 +5621,26 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
         retrievedData["results"] = globalResults;
         retrievedData["k"] = globalResults.size();
 
-        std::string finalAnswer = AgentProtocol::getResponse(agentRequestCtx, retrievedData.dump(2));
+        string data = "";
+
+        set<string> visitedChunks;
+        for ( auto path : globalResults) {
+            instance_logger.debug(path.dump());
+            for (auto chunk : path["pathObj"]["chunks"]) {
+                instance_logger.debug(chunk.dump());
+
+                if (visitedChunks.find(chunk["id"].get<string>())== visitedChunks.end()) {
+                    instance_logger.debug(data);
+                    data+=chunk["name"].get<string>();
+                    data += "\n";
+                    visitedChunks.insert(chunk["id"].get<string>());
+                }
+
+            }
+        }
+
+
+        std::string finalAnswer = AgentProtocol::getResponse(agentRequestCtx, data);
 
         auto chunks = chunkText(finalAnswer);
 
