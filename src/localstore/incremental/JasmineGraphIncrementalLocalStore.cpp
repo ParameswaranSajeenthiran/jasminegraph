@@ -298,12 +298,12 @@ void JasmineGraphIncrementalLocalStore::addLocalEdge(std::string edge) {
                     destinationProps["name"].get<std::string>());
             }
 
-            auto sourceProps = jsonSource["properties"];
-            labelStr = sourceProps["label"].get<std::string>();
-            if (labelStr == "chunk") {
-                chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(sourceProps["id"].get<std::string>()),
-                    sourceProps["name"].get<std::string>());
-            }
+            // auto sourceProps = jsonSource["properties"];
+            // labelStr = sourceProps["label"].get<std::string>();
+            // if (labelStr == "chunk") {
+            //     chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(sourceProps["id"].get<std::string>()),
+            //         sourceProps["name"].get<std::string>());
+            // }
 
             return;
         }
@@ -371,12 +371,12 @@ void JasmineGraphIncrementalLocalStore::addCentralEdge(std::string edge) {
             chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(destinationProps["id"].get<std::string>()),
                 destinationProps["name"].get<std::string>());
         }
-        auto sourceProps = jsonSource["properties"];
-        labelStr = sourceProps["label"].get<std::string>();
-        if (labelStr == "chunk") {
-            chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(sourceProps["id"].get<std::string>()),
-                sourceProps["name"].get<std::string>());
-        }
+        // auto sourceProps = jsonSource["properties"];
+        // labelStr = sourceProps["label"].get<std::string>();
+        // if (labelStr == "chunk") {
+        //     chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(sourceProps["id"].get<std::string>()),
+        //         sourceProps["name"].get<std::string>());
+        // }
 
         return;
     }

@@ -5581,9 +5581,38 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
             }
             instance_logger.info("[GraphRAG][SBS] ID" + obj.id + " Top-" + std::to_string(results.size()) +
                                  " results selected");
+            // 1. Copy original results (FULL version)
+json originalResults = results;
 
-            mainTrace["retrieved_paths"] = results;
-            objectiveTraces.push_back(mainTrace);
+// 2. Extract chunks separately
+set<string> visitedChunks;
+mainTrace["retrieved_chunks"] = json::array();
+
+for (const auto& result : originalResults) {
+    if (!result["pathObj"].contains("chunks")) continue;
+
+    for (const auto& chunk : result["pathObj"]["chunks"]) {
+        string chunkId = chunk["id"].get<string>();
+
+        if (visitedChunks.insert(chunkId).second) { // insert returns true if new
+            instance_logger.debug(chunk["name"]);
+            mainTrace["retrieved_chunks"].push_back(chunk);
+        }
+    }
+}
+
+// 3. Create CLEANED results (without chunks)
+json cleanedResults = originalResults;
+
+for (auto& result : cleanedResults) {
+    result["pathObj"].erase("chunks");  // 🔥 remove chunk array
+}
+
+// 4. Use both appropriately
+mainTrace["retrieved_paths"] = cleanedResults;   // downstream (clean)
+mainTrace["retrieved_paths_full"] = originalResults; // optional (full backup)
+
+objectiveTraces.push_back(mainTrace);
 
             std::lock_guard<std::mutex> lock(globalResultsMutex);
             globalResults.insert(globalResults.end(), results.begin(), results.end());

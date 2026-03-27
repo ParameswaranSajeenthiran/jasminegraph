@@ -24,32 +24,15 @@ using json = nlohmann::json;
 Logger responder_logger;
 
 static const std::string RESPONDER_PROMPT = R"(
+
 You are an intelligent question-answering system.
 
 You will be given:
 1. A **User Query**
-2. **Retrieved Data** consisting of one or more traversal paths from a knowledge graph.
+2. **Retrieved Data** consisting of one or more Documents.
 
-Each traversal path contains:
-- `pathNodes`: an ordered list of nodes visited during traversal
-- `pathRels`: an ordered list of relationships connecting the nodes
-- `score`: a relevance score (higher means more relevant)
+Give the answer in shortest possible phrase. Don't explain.
 
-Your task:
-- Use ONLY the information present in the Retrieved Data to answer the User Query.
-- Interpret each traversal path as factual evidence.
-- Combine information from multiple paths if needed.
-- Prefer higher-scored paths when multiple paths provide overlapping information.
-- Do NOT invent facts or use external knowledge.
-- If the Retrieved Data does not contain enough information to answer the query, explicitly say so.
-
-Guidelines:
-- Reason over the nodes and relationships to infer the answer.
-- Paraphrase graph facts into clear, natural language.
-- Be concise, factual, and directly answer the query.
-- Do not mention graph structure, node IDs, partition IDs, or scores in the final response.
-
-Provide Answer in a short phrase only. Do not explain.
 )";
 
 Responder::Responder(const std::string& model, const std::string& host, const std::string& engine)
@@ -58,7 +41,7 @@ Responder::Responder(const std::string& model, const std::string& host, const st
 json Responder::generateResponse(const std::string& query, const json& executionResult) {
     std::string prompt = RESPONDER_PROMPT + std::string("\n\nUser Query:\n") + query +
                          std::string("\n\nRetrieved Data:\n") + executionResult.dump(2) +
-                         std::string("\n\nFinal Answer:");
+                         std::string("\n\nFinal Answer is:");
 
     responder_logger.debug("Responder Prompt: " + prompt);
     const int maxRetries = 3;

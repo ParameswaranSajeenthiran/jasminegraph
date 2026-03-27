@@ -1,12 +1,16 @@
 #include "ChunkStore.h"
 
-#include <fstream>
-#include <filesystem>
-#include <stdexcept>
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <filesystem>
+#include <fstream>
+#include <stdexcept>
+
+#include "../../util/logger/Logger.h"
+
 namespace fs = std::filesystem;
+Logger chunk_store_logger;
 
 std::string ChunkStore::getChunkFileName(int graphId, int partitionId, int chunkId) const {
     return baseDir + "/g" + std::to_string(graphId) +
@@ -59,7 +63,8 @@ std::string ChunkStore::readChunk(int graphId, int partitionId, int chunkId) {
 
     std::ifstream in(filePath, std::ios::binary | std::ios::ate);
     if (!in.is_open()) {
-        throw std::runtime_error("Failed to open chunk file for reading: " + filePath);
+      chunk_store_logger.error("Failed to open chunk file for reading: " + filePath);
+        return "";
     }
 
     std::streamsize size = in.tellg();
