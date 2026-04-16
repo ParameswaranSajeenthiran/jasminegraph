@@ -29,7 +29,7 @@ STRICT RULES:
 - Prefer the MOST GENERAL valid schema.org superclass for entity types
   (e.g., Person instead of Actor, Place instead of City)
 - Every tuple MUST contain 5 or more fields
-- Every field MUST be a non-empty string
+- Don't put null for not applicable fields, just leave it empty
 - NEVER use pronouns (He, She, It, They, etc.) as subject or object
 - Output ONLY valid JSON
 

@@ -19,6 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "../../../../nativestore/NodeManager.h"
+#include "../../../../rag/chunkstore/ChunkStore.h"
 #include "../../../../server/JasmineGraphServer.h"
 #include "../../../../vectorstore/FaissIndex.h"
 #include "../../../../vectorstore/TextEmbedder.h"
@@ -39,8 +40,10 @@ struct HopTrace {
 struct ScoredPath {
     int pathId;
     nlohmann::json pathObj;
+    set<string> pathChunkIds;
     set<string> pathNodeIds;
     set<string> pathRelIds;
+
     float score;
     std::vector<HopTrace> hopTraces;
 };
@@ -50,6 +53,7 @@ class SemanticBeamSearch {
     FaissIndex *faissStore;
     FaissIndex *faissEdgeStore;
     TextEmbedder *textEmbedder;
+        ChunkStore *chunkStore;
     const std::vector<float> emb;
     int k;  // Number of top results to return
     GraphConfig gc;

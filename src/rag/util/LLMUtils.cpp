@@ -19,6 +19,7 @@ limitations under the License.
 #include <nlohmann/json.hpp>
 #include <thread>
 
+#include "../../util/Utils.h"
 #include "../../util/logger/Logger.h"
 
 Logger llmutil_logger;
@@ -66,11 +67,14 @@ std::string callLLM(const std::string& prompt, const std::string& host, const st
         return "";
 
     std::string url;
-    if (engine == "vllm") {
+
+    if (engine == "vllm" || engine == "openai") {
         url = host + "/v1/chat/completions";
     } else {
         url = host + "/api/generate";
     }
+
+    llmutil_logger.info("LLM request url: " + url);
 
     // TLS + connection settings
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_DEFAULT);
@@ -80,9 +84,12 @@ std::string callLLM(const std::string& prompt, const std::string& host, const st
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
 
     json requestJson;
-    if (engine == "vllm") {
+
+    if (engine == "vllm" || engine == "openai") {
         requestJson["model"] = model;
-        requestJson["messages"] = json::array({{{"role", "user"}, {"content", prompt}}});
+        requestJson["messages"] = json::array({
+            {{"role", "user"}, {"content", prompt}}
+        });
         requestJson["max_tokens"] = 10000;
         requestJson["stream"] = false;
     } else {
@@ -93,9 +100,18 @@ std::string callLLM(const std::string& prompt, const std::string& host, const st
     }
 
     std::string postFields = requestJson.dump();
+    llmutil_logger.info("LLM post request  " + postFields);
 
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, "Content-Type: application/json");
+    // 🔑 OpenAI Authorization Header
+    if (engine == "openai") {
+        std::string apiKey = Utils::getJasmineGraphProperty("org.jasminegraph.agent.openai.apikey");
+
+        std::string authHeader = "Authorization: Bearer " + apiKey;
+        headers = curl_slist_append(headers, authHeader.c_str());
+    }
+
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postFields.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, postFields.size());
@@ -112,10 +128,12 @@ std::string callLLM(const std::string& prompt, const std::string& host, const st
     curl_easy_cleanup(curl);
 
     try {
+        llmutil_logger.info("LLM post response  " + result);
         json raw = json::parse(result);
         std::string text;
 
-        if (engine == "vllm") {
+        if (engine == "vllm" || engine == "openai") {
+
             if (!raw.contains("choices") || raw["choices"].empty())
                 return "";
 
@@ -131,6 +149,7 @@ std::string callLLM(const std::string& prompt, const std::string& host, const st
     } catch (const std::exception& e) {
         llmutil_logger.error("LLM response parse error: " + std::string(e.what()));
     }
+
     return "";
 }
 }  // namespace LLMUtils

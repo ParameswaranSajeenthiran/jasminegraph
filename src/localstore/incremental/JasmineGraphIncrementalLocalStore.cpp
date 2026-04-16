@@ -35,6 +35,7 @@ JasmineGraphIncrementalLocalStore::JasmineGraphIncrementalLocalStore(
   gc.maxLabelSize = std::stoi(Utils::getJasmineGraphProperty(
       "org.jasminegraph.nativestore.max.label.size"));
   this->embedNode = embedNode;
+
   this->node_embedding_requests = std::make_unique<std::unordered_map<string, string>>();
   this->edge_embedding_requests = std::make_unique<std::set<string>>();
   this->embeddingQueueMutex = PTHREAD_MUTEX_INITIALIZER;
@@ -44,6 +45,7 @@ JasmineGraphIncrementalLocalStore::JasmineGraphIncrementalLocalStore(
 
   gc.openMode = openMode;
   this->nm = new NodeManager(gc);
+    this->chunkStore =  new ChunkStore(this->nm->getDbPrefix()+ "_chunk_store");
   if (this->embedNode) {
     incremental_localstore_logger.debug("Embedding enabled for the local store");
     this->faissNodeStore =
@@ -54,8 +56,22 @@ JasmineGraphIncrementalLocalStore::JasmineGraphIncrementalLocalStore(
      FaissIndex::getInstance(std::stoi(Utils::getJasmineGraphProperty(
                                  "org.jasminegraph.vectorstore.dimension")),
                              this->nm->getDbPrefix() + "_faiss_edge.index");
+      std::string endpointsStr =
+          Utils::getJasmineGraphProperty(
+              "org.jasminegraph.vectorstore.embedding.ollama.endpoints");
+
+      std::vector<std::string> endpoints;
+      std::stringstream ss(endpointsStr);
+      std::string item;
+
+      while (std::getline(ss, item, ',')) {
+          if (!item.empty()) {
+              endpoints.push_back(item);
+          }
+      }
+      std::string endpoint = endpoints[partitionID % endpoints.size()];
     this->textEmbedder = new TextEmbedder(
-        Utils::getJasmineGraphProperty("org.jasminegraph.vectorstore.embedding.ollama.endpoint"),  // Ollama endpoint
+       endpoint,  // Ollama endpoint
         Utils::getJasmineGraphProperty(
             "org.jasminegraph.vectorstore.embedding.model"));
   }
@@ -283,9 +299,28 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromString(
 
 void JasmineGraphIncrementalLocalStore::addLocalEdge(std::string edge) {
     try {
+
         auto jsonEdge = json::parse(edge);
         auto jsonSource = jsonEdge["source"];
         auto jsonDestination = jsonEdge["destination"];
+        if (jsonEdge["properties"]["type"] == "chunkRef") {
+
+            auto destinationProps = jsonDestination["properties"];
+            string labelStr = destinationProps["label"].get<std::string>();
+            if (labelStr == "chunk") {
+                chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(destinationProps["id"].get<std::string>()),
+                    destinationProps["name"].get<std::string>());
+            }
+
+            // auto sourceProps = jsonSource["properties"];
+            // labelStr = sourceProps["label"].get<std::string>();
+            // if (labelStr == "chunk") {
+            //     chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(sourceProps["id"].get<std::string>()),
+            //         sourceProps["name"].get<std::string>());
+            // }
+
+            return;
+        }
 
         if (!jsonSource.contains("id") || !jsonDestination.contains("id")) {
             incremental_localstore_logger.error(
@@ -341,8 +376,26 @@ void JasmineGraphIncrementalLocalStore::addLocalEdge(std::string edge) {
 
 void JasmineGraphIncrementalLocalStore::addCentralEdge(std::string edge) {
   auto jsonEdge = json::parse(edge);
-  auto jsonSource = jsonEdge["source"];
-  auto jsonDestination = jsonEdge["destination"];
+    auto jsonSource = jsonEdge["source"];
+    auto jsonDestination = jsonEdge["destination"];
+    if (jsonEdge["properties"]["type"] == "chunkRef") {
+        auto destinationProps = jsonDestination["properties"];
+        string labelStr = destinationProps["label"].get<std::string>();
+        if (labelStr == "chunk") {
+            chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(destinationProps["id"].get<std::string>()),
+                destinationProps["name"].get<std::string>());
+        }
+        // auto sourceProps = jsonSource["properties"];
+        // labelStr = sourceProps["label"].get<std::string>();
+        // if (labelStr == "chunk") {
+        //     chunkStore->saveChunk(gc.graphID, gc.partitionID,stoi(sourceProps["id"].get<std::string>()),
+        //         sourceProps["name"].get<std::string>());
+        // }
+
+        return;
+    }
+
+
 
   std::string sId = std::string(jsonSource["id"]);
   std::string dId = std::string(jsonDestination["id"]);
@@ -439,6 +492,7 @@ void JasmineGraphIncrementalLocalStore::addSourceProperties(
 incremental_localstore_logger.debug("Adding source properties: " + sourceJson.dump());
   if (sourceJson.contains("properties")) {
     auto sourceProps = json(sourceJson["properties"]);
+      string labelStr = sourceProps["label"].get<std::string>();
 
     if (!sourceProps.empty()) {
       for (auto it = sourceProps.begin(); it != sourceProps.end(); it++) {
@@ -448,8 +502,7 @@ incremental_localstore_logger.debug("Adding source properties: " + sourceJson.du
           strcpy(label, it.value().get<std::string>().c_str());
           relationBlock->getSource()->addLabel(&label[0]);
          }
-          if (it.key() == "label" || it.key() == "name" || it.key() == "when" || it.key() == "where"  || it.key() ==
-             "type" ) {
+          if (  it.key() == "name" || it.key() == "when" || it.key() == "where"  ) {
               textForEmbedding << value << "\n";
              }
 
@@ -493,8 +546,7 @@ void JasmineGraphIncrementalLocalStore::addDestinationProperties(
           strcpy(label, it.value().get<std::string>().c_str());
           relationBlock->getDestination()->addLabel(&label[0]);
         }
-          if (it.key() == "label" || it.key() == "name" || it.key() == "when" || it.key() == "where"  || it.key() ==
-              "type" ) {
+          if ( it.key() == "name" || it.key() == "when" || it.key() == "where" ) {
               textForEmbedding << value << "\n";
           }
               relationBlock->getDestination()->addProperty(std::string(it.key()),

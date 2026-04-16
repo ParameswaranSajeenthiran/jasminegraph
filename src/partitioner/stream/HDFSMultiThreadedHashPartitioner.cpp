@@ -340,7 +340,7 @@ void HDFSMultiThreadedHashPartitioner::consumeEdgeCuts(int partitionIndex, Jasmi
                 partitions[partitionIndex]->addToEdgeCuts(sourceId, destinationId, partitionIndex);
             }
 
-            int destinationIndex = std::stoi(destinationId) % this->numberOfPartitions;
+            int destinationIndex = jsonEdge["destination"]["properties"]["pid"].get<int>();
             hash_partitioner_logger.debug("Edge cut from " + sourceId + " to " + destinationId +
                                           " assigned to partition " + std::to_string(partitionIndex));
 

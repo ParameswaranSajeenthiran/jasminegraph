@@ -320,7 +320,7 @@ void JasmineGraphServer::start_workers() {
         workerDataPortsMap[hostName] = dataPortVector;
     }
 
-    Utils::assignPartitionsToWorkers(numberOfWorkers, this->sqlite);
+    // Utils::assignPartitionsToWorkers(numberOfWorkers, this->sqlite);
 
     int hostListSize = hostsList.size();
     std::vector<std::string>::iterator hostListIterator;

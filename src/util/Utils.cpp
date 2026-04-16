@@ -461,7 +461,7 @@ void Utils::assignPartitionsToWorkers(int numberOfWorkers, SQLiteDBInterface* sq
     sqlite->runUpdate("DELETE FROM worker_has_partition");
 
     std::vector<vector<pair<string, string>>> v =
-        sqlite->runSelect("SELECT idpartition, graph_idgraph FROM partition;");
+        sqlite->runSelect("SELECT idpartition, graph_idgraph FROM partition ORDER BY idpartition;");
     int workerCounter = 0;
     string valueString;
     string sqlStatement =

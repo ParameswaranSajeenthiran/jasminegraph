@@ -35,7 +35,7 @@ void *filetransferservicesession(void *dummyPt) {
     string fsizeStr = Utils::read_str_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
     int fsize = stoi(fsizeStr);
     Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::SEND_FILE);
-    char buffer[4096];
+    char buffer[10000];
     file_service_logger.info("File transfer started for file: " + fileName);
     std::ofstream file(filePathWithName, std::ios::out | std::ios::binary);
     while (fsize > 0) {

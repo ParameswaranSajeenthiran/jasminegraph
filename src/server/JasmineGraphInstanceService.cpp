@@ -3689,6 +3689,8 @@ static void streaming_tuple_extraction(
   std::condition_variable dataBufferCV;
   std::mutex dataBufferMutex;
   while (true) {
+
+
     std::string command =
         Utils::read_str_trim_wrapper(connFd, data, INSTANCE_DATA_LENGTH);
 
@@ -3702,6 +3704,9 @@ static void streaming_tuple_extraction(
     }
     Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
 
+      std::string chunkId =
+    Utils::read_str_trim_wrapper(connFd, data, INSTANCE_LONG_DATA_LENGTH);
+      Utils::send_str_wrapper(connFd, JasmineGraphInstanceProtocol::OK);
     int content_length;
     recv(connFd, &content_length, sizeof(int), 0);
     content_length = ntohl(content_length);
@@ -3840,7 +3845,7 @@ if (tuple_id > 0) {
       }
     });
 
-    streamer->streamChunk("chunk1", chunk, tupleBuffer);
+    streamer->streamChunk(chunkId, chunk, tupleBuffer);
     consumer.join();
   }
 }
@@ -5389,13 +5394,13 @@ static void semantic_beam_search(int connFd, InstanceHandler& instanceHandler,
            to_string(duration));
     SemanticBeamSearch* semanticBeamSearch = new SemanticBeamSearch(
         incrementalLocalStoreInstance->faissNodeStore, incrementalLocalStoreInstance->faissEdgeStore,
-        incrementalLocalStoreInstance->textEmbedder, userQueryEmbedding, 7,
+        incrementalLocalStoreInstance->textEmbedder, userQueryEmbedding, 20,
         incrementalLocalStoreInstance->gc, workers, incrementalLocalStoreInstance->nm);
     // semanticBeamSearch->getSeedNodes();
     SharedBuffer shared(50);
     auto sbsTraversalStartTime = std::chrono::high_resolution_clock::now();
 
-    semanticBeamSearch->semanticMultiHopBeamSearch(shared, 3, 15);
+    semanticBeamSearch->semanticMultiHopBeamSearch(shared, 3, 20);
     while (true) {
         string raw = shared.get();
         instance_logger.debug("raw: " + raw);
@@ -5570,15 +5575,44 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
             std::sort(results.begin(), results.end(),
                       [](const json& a, const json& b) { return a["score"] > b["score"]; });
 
-            int k = 20;
+            int k = 50;
             if (results.size() > static_cast<size_t>(k)) {
                 results.resize(k);
             }
             instance_logger.info("[GraphRAG][SBS] ID" + obj.id + " Top-" + std::to_string(results.size()) +
                                  " results selected");
+            // 1. Copy original results (FULL version)
+json originalResults = results;
 
-            mainTrace["retrieved_paths"] = results;
-            objectiveTraces.push_back(mainTrace);
+// 2. Extract chunks separately
+set<string> visitedChunks;
+mainTrace["retrieved_chunks"] = json::array();
+
+for (const auto& result : originalResults) {
+    if (!result["pathObj"].contains("chunks")) continue;
+
+    for (const auto& chunk : result["pathObj"]["chunks"]) {
+        string chunkId = chunk["id"].get<string>();
+
+        if (visitedChunks.insert(chunkId).second) { // insert returns true if new
+            instance_logger.debug(chunk["name"]);
+            mainTrace["retrieved_chunks"].push_back(chunk);
+        }
+    }
+}
+
+// 3. Create CLEANED results (without chunks)
+json cleanedResults = originalResults;
+
+for (auto& result : cleanedResults) {
+    result["pathObj"].erase("chunks");  // 🔥 remove chunk array
+}
+
+// 4. Use both appropriately
+mainTrace["retrieved_paths"] = cleanedResults;   // downstream (clean)
+mainTrace["retrieved_paths_full"] = originalResults; // optional (full backup)
+
+objectiveTraces.push_back(mainTrace);
 
             std::lock_guard<std::mutex> lock(globalResultsMutex);
             globalResults.insert(globalResults.end(), results.begin(), results.end());
@@ -5604,11 +5638,44 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
         std::sort(globalResults.begin(), globalResults.end(),
                   [](const json& a, const json& b) { return a["score"] > b["score"]; });
 
-        int k = 20;
-        if (globalResults.size() > static_cast<size_t>(k)) {
-            globalResults.resize(k);
+
+        // ---- Collect ALL chunks with scores ----
+        std::vector<json> allChunks;
+
+        for (const auto& path : globalResults) {
+            for (const auto& chunk : path["pathObj"]["chunks"]) {
+                json chunkObj = chunk;
+
+                // Attach path score to chunk (or use chunk["score"] if exists)
+                chunkObj["score"] = path["score"];
+
+                allChunks.push_back(chunkObj);
+            }
         }
 
+        // ---- Sort chunks globally by score ----
+        std::sort(allChunks.begin(), allChunks.end(),
+                  [](const json& a, const json& b) {
+                      return a["score"] > b["score"];
+                  });
+
+        // ---- Keep only top 20 chunks ----
+        int k = 20;
+        if (allChunks.size() > static_cast<size_t>(k)) {
+            allChunks.resize(k);
+        }
+        string data = "";
+        set<string> visitedChunks;
+
+        for (const auto& chunk : allChunks) {
+            std::string id = chunk["id"].get<string>();
+
+            if (visitedChunks.find(id) == visitedChunks.end()) {
+                data += chunk["name"].get<string>();
+                data += "\n";
+                visitedChunks.insert(id);
+            }
+        }
         instance_logger.info("[GraphRAG] Global Top-" + std::to_string(globalResults.size()) + " results selected");
 
         // ---- LLM call ----
@@ -5616,7 +5683,26 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
         retrievedData["results"] = globalResults;
         retrievedData["k"] = globalResults.size();
 
-        std::string finalAnswer = AgentProtocol::getResponse(agentRequestCtx, retrievedData.dump(2));
+        // string data = "";
+        //
+        // set<string> visitedChunks;
+        // for ( auto path : globalResults) {
+        //     instance_logger.debug(path.dump());
+        //     for (auto chunk : path["pathObj"]["chunks"]) {
+        //         instance_logger.debug(chunk.dump());
+        //
+        //         if (visitedChunks.find(chunk["id"].get<string>())== visitedChunks.end()) {
+        //             instance_logger.debug(data);
+        //             data+=chunk["name"].get<string>();
+        //             data += "\n";
+        //             visitedChunks.insert(chunk["id"].get<string>());
+        //         }
+        //
+        //     }
+        // }
+
+
+        std::string finalAnswer = AgentProtocol::getResponse(agentRequestCtx, data);
 
         auto chunks = chunkText(finalAnswer);
 
