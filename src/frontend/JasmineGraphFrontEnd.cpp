@@ -798,75 +798,93 @@ void  JasmineGraphFrontEnd::agent_plan_command(std::string masterIP, int connFd,
 
     frontend_logger.debug("LLM model: " + llmModel);
 
-    // ---------------Verify Model------------
+ // ---------------Verify Model------------
 
-        std::string url;
-        bool modelFound = false;
-        std::string endpointPath;
-        if (inferenceEngine == "ollama") {
-            endpointPath = "api/tags";
-        } else if (inferenceEngine == "vllm") {
-            endpointPath = "/v1/models";
-        } else {
-            frontend_logger.error("Unknown inference engine: " + inferenceEngine);
-            std::string msg = "Unknown inference engine '" + inferenceEngine + "'";
-            write(connFd, msg.c_str(), msg.length());
-            write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
-            *loop_exit = true;
-            return;
+std::string url;
+bool modelFound = false;
+std::string endpointPath;
+
+if (inferenceEngine == "ollama") {
+    endpointPath = "api/tags";
+} else if (inferenceEngine == "vllm" || inferenceEngine == "openai") {
+    endpointPath = "/v1/models";
+} else {
+    frontend_logger.error("Unknown inference engine: " + inferenceEngine);
+    std::string msg = "Unknown inference engine '" + inferenceEngine + "'";
+    write(connFd, msg.c_str(), msg.length());
+    write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+    *loop_exit = true;
+    return;
+}
+
+url = Utils::normalizeURL(llmRunner, endpointPath);
+frontend_logger.debug("Final LLM endpoint: " + url);
+
+CURL* curl = curl_easy_init();
+if (curl) {
+    std::string response;
+
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_DEFAULT);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
+
+    struct curl_slist* headers = nullptr;
+
+    // 🔑 OpenAI needs Authorization header
+    if (inferenceEngine == "openai") {
+        std::string openaiApiKey = Utils::getJasmineGraphProperty("org.jasminegraph.agent.openai.apikey");
+
+        std::string authHeader = "Authorization: Bearer " + openaiApiKey; // <-- make sure this exists
+        headers = curl_slist_append(headers, authHeader.c_str());
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    }
+
+    CURLcode res = curl_easy_perform(curl);
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+
+    if (res != CURLE_OK) {
+        frontend_logger.error("Failed to reach " + inferenceEngine + " server at " + llmRunner);
+        std::string msg = "Could not connect to " + inferenceEngine + " server.";
+        write(connFd, msg.c_str(), msg.length());
+        write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+        *loop_exit = true;
+        return;
+    }
+
+    // --- Check model existence ---
+    if (inferenceEngine == "ollama") {
+        // {"models":[{"name":"llama2"}]}
+        if (response.find("\"name\":\"" + llmModel + "\"") != std::string::npos) {
+            modelFound = true;
         }
-
-        url = Utils::normalizeURL(llmRunner, endpointPath);
-        frontend_logger.debug("Final LLM endpoint: " + url);
-
-        CURL* curl = curl_easy_init();
-        if (curl) {
-            std::string response;
-            curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_DEFAULT);
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-            curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-            curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-            curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
-            curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5L);
-
-            CURLcode res = curl_easy_perform(curl);
-            curl_easy_cleanup(curl);
-
-            if (res != CURLE_OK) {
-                frontend_logger.error("Failed to reach " + inferenceEngine + " server at " + llmRunner);
-                std::string msg = "Could not connect to " + inferenceEngine + " server.";
-                write(connFd, msg.c_str(), msg.length());
-                write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
-                *loop_exit = true;
-                return;
-            }
-
-            // --- Check model existence ---
-            if (inferenceEngine == "ollama") {
-                // Ollama returns {"models":[{"name":"llama2"}]}
-                if (response.find("\"name\":\"" + llmModel + "\"") != std::string::npos) {
-                    modelFound = true;
-                }
-            } else if (inferenceEngine == "vllm") {
-                // vLLM returns {"data":[{"id":"mistral"}]}
-                frontend_logger.debug(response);
-                if (response.find("\"id\":\"" + llmModel + "\"") != std::string::npos) {
-                    modelFound = true;
-                }
-            }
-
-            if (!modelFound) {
-                frontend_logger.error("Model '" + llmModel + "' not found on " + inferenceEngine + " server.");
-                std::string msg = "Model '" + llmModel + "' not available on " + inferenceEngine + " server.";
-                write(connFd, msg.c_str(), msg.length());
-                write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
-                *loop_exit = true;
-                return;
-            } else {
-                frontend_logger.info("Verified model '" + llmModel + "' exists on " + inferenceEngine + " server.");
-            }
+    } else if (inferenceEngine == "vllm" ) {
+        // {"data":[{"id":"model-name"}]}
+        frontend_logger.debug(response);
+        if (response.find("\"id\":\"" + llmModel + "\"") != std::string::npos) {
+            modelFound = true;
         }
+    } else if ( inferenceEngine == "openai") {
+        modelFound = true;
+    }
+
+    if (!modelFound) {
+        frontend_logger.error("Model '" + llmModel + "' not found on " + inferenceEngine + " server.");
+        std::string msg = "Model '" + llmModel + "' not available on " + inferenceEngine + " server.";
+        write(connFd, msg.c_str(), msg.length());
+        write(connFd, Conts::CARRIAGE_RETURN_NEW_LINE.c_str(), Conts::CARRIAGE_RETURN_NEW_LINE.size());
+        *loop_exit = true;
+        return;
+    } else {
+        frontend_logger.info("Verified model '" + llmModel + "' exists on " + inferenceEngine + " server.");
+    }
+}
 
     auto begin = chrono::high_resolution_clock::now();
 

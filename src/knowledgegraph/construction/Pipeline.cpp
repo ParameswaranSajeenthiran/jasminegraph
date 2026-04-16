@@ -564,7 +564,7 @@ json Pipeline::processTupleAndSaveInPartition(const std::vector<std::shared_ptr<
 
             while (isProcessing) {
 
-if (tripleCount % 10) {
+if (tripleCount % 10 ==0) {
     prevSnapShotTime = snapShotTime;
     snapShotTime = std::chrono::high_resolution_clock::now();
 
@@ -696,6 +696,7 @@ if (tripleCount % 10) {
                                         {"destination", destination},
                                         {"properties", jsonEdge["properties"]}};
                             partitions.addLocalEdge(obj.dump(), sourceIndex);
+                            chunkTrackers[chunkId].processedTuples++;
                             kg_pipeline_stream_handler_logger.debug("Thread " + std::to_string(i) +
                                                         " adding local edge to partition " +
                                                         std::to_string(sourceIndex));
@@ -715,6 +716,14 @@ if (tripleCount % 10) {
                             kg_pipeline_stream_handler_logger.error("Malformed line: missing source/destination ID: " +
                                                                     line);
                         }
+                        if (chunkTrackers[chunkId].processedTuples ==
+    chunkTrackers[chunkId].totalTuples) {
+
+    realTimeBytesMutex.lock();
+    bytes_read_so_far += chunkSizeMap[chunkId];
+    realtime_bytes_read_so_far = bytes_read_so_far;
+    realTimeBytesMutex.unlock();
+}
                     } catch (const json::parse_error& e) {
                         kg_pipeline_stream_handler_logger.error("JSON parse error: " + std::string(e.what()) +
                                                                 " | Line: " + line);
@@ -933,7 +942,9 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                 std::to_string(partitionId));
                 lock.unlock();
                 dataBufferCV.notify_all();
-
+                auto& tracker = chunkTrackers[chunkId];
+                tracker.totalTuples = 0;
+                tracker.processedTuples.store(0);
 
                 if (chunk == END_OF_STREAM_MARKER) {
                     kg_pipeline_stream_handler_logger.debug("Received END_OF_STREAM_MARKER for partitionId: " +
@@ -1162,10 +1173,11 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
 
 
                             kg_pipeline_stream_handler_logger.debug("Received END_OF_STREAM_MARKER 700");
-                            realTimeBytesMutex.lock();
-                            bytes_read_so_far += chunkData.chunk_size;
-                            realtime_bytes_read_so_far = bytes_read_so_far;
-                            realTimeBytesMutex.unlock();
+                            chunkSizeMap[chunkId] = chunkData.chunk_size;
+                            // realTimeBytesMutex.lock();
+                            // bytes_read_so_far += chunkData.chunk_size;
+                            // realtime_bytes_read_so_far = bytes_read_so_far;
+                            // realTimeBytesMutex.unlock();
                             kg_pipeline_stream_handler_logger.info("Tuple extractor shared buffer size: " +
                     to_string(sharedBuffer->size()));
 
@@ -1193,7 +1205,7 @@ void Pipeline::extractTuples(std::string host, int port, std::string masterIP, i
                         kg_pipeline_stream_handler_logger.debug("951");
 
                         sharedBuffer->add(tuple);
-
+                        chunkTrackers[chunkId].totalTuples++;
 
                         kg_pipeline_stream_handler_logger.debug("954");
                     } catch (exception& e) {

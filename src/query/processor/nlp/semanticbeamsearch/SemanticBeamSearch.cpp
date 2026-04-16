@@ -54,10 +54,11 @@ std::vector<ScoredPath> SemanticBeamSearch::getSeedNodes() {
 
   std::vector<ScoredPath> paths;
   try {
-    auto results = faissStore->search(emb, 5);
+    auto results = faissStore->search(emb, 20);
     // semantic_beam_search_logger.debug("Top " + to_string(results.size())+ " nodes found");
       int pathId = 0;
     for (auto& [id, dist] : results) {
+        semantic_beam_search_logger.debug("Retrieved Node faiss id:" + to_string(id) );
         semantic_beam_search_logger.debug("Retrieved Node from FAISS index: " +faissStore->getNodeIdFromEmbeddingId(
             (id)));
 

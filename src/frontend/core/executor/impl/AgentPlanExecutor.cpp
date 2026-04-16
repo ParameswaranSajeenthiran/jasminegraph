@@ -117,14 +117,72 @@ void AgentPlanExecutor::execute() {
     };
 
     std::vector<JasmineGraphServer::worker> workers = JasmineGraphServer::getWorkers(numberOfPartitions);
+    //
+    // for (size_t i = 0; i < workers.size(); i++) {
+    //     workerListStr +=
+    //         workers[i].hostname + ":" + std::to_string(workers[i].port) + ":" + std::to_string(workers[i].dataPort);
+    //     if (i + 1 < workers.size()) {
+    //         workerListStr += ",";
+    //     }
+    // }
+    //
 
-    for (size_t i = 0; i < workers.size(); i++) {
-        workerListStr +=
-            workers[i].hostname + ":" + std::to_string(workers[i].port) + ":" + std::to_string(workers[i].dataPort);
-        if (i + 1 < workers.size()) {
-            workerListStr += ",";
+    std::unordered_map<std::string, JasmineGraphServer::worker> workerByIP;
+
+    for (const auto& w : workers) {
+        workerByIP[w.hostname] = w;
+    }
+    std::string workerListString;
+
+
+    std::map<int, JasmineGraphServer::worker> partitionWorkerMap;  // key = partitionId
+    std::string sqlStatement =
+        "SELECT partition_idpartition, worker.ip, worker.server_port, worker.server_data_port "
+        "FROM worker_has_partition "
+        "INNER JOIN worker ON worker.idworker = worker_has_partition.worker_idworker "
+        "WHERE partition_graph_idgraph = " + graphId + ";";
+
+    const auto& sqlResult = sqlite->runSelect(sqlStatement);
+
+    for (const auto& row : sqlResult) {
+        agent_executor_logger.info(row[0].second);
+        agent_executor_logger.info(row[1].second);
+        agent_executor_logger.info(row[2].second);
+        agent_executor_logger.info(row[3].second);
+        int partitionId = std::stoi(row[0].second);
+        JasmineGraphServer::worker w;
+        auto it = workerByIP.find(row[1].second);
+        if (it != workerByIP.end()) {
+            w = it->second;
+        } else {
+            w.hostname = row[1].second;
+            w.port = std::stoi(row[2].second);
+            w.dataPort = std::stoi(row[3].second);
+        }
+        partitionWorkerMap[partitionId] = w;
+        agent_executor_logger.info(w.hostname);
+        agent_executor_logger.info(to_string(w.port));
+
+
+    }
+
+    std::ostringstream workerListStream;
+
+    for (int i = 0; i < numberOfPartitions; ++i) {
+
+        if (partitionWorkerMap.find(i) != partitionWorkerMap.end()) {
+
+            JasmineGraphServer::worker w = partitionWorkerMap[i];
+
+            workerListStream <<  w.hostname + ":" + std::to_string(w.port) + ":" + std::to_string(w.dataPort);
+
+            if (i != numberOfPartitions - 1) {
+                workerListStream << ",";
+            }
         }
     }
+
+    workerListStr = workerListStream.str();
 
     // Protocol sequence
     Utils::send_str_wrapper(sockfd, "initiate-agent-plan");

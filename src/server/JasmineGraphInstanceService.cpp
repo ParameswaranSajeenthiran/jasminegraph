@@ -5394,13 +5394,13 @@ static void semantic_beam_search(int connFd, InstanceHandler& instanceHandler,
            to_string(duration));
     SemanticBeamSearch* semanticBeamSearch = new SemanticBeamSearch(
         incrementalLocalStoreInstance->faissNodeStore, incrementalLocalStoreInstance->faissEdgeStore,
-        incrementalLocalStoreInstance->textEmbedder, userQueryEmbedding, 7,
+        incrementalLocalStoreInstance->textEmbedder, userQueryEmbedding, 20,
         incrementalLocalStoreInstance->gc, workers, incrementalLocalStoreInstance->nm);
     // semanticBeamSearch->getSeedNodes();
     SharedBuffer shared(50);
     auto sbsTraversalStartTime = std::chrono::high_resolution_clock::now();
 
-    semanticBeamSearch->semanticMultiHopBeamSearch(shared, 3, 15);
+    semanticBeamSearch->semanticMultiHopBeamSearch(shared, 3, 20);
     while (true) {
         string raw = shared.get();
         instance_logger.debug("raw: " + raw);
@@ -5575,7 +5575,7 @@ static void graphrag_command(int connFd, InstanceHandler& instanceHandler,
             std::sort(results.begin(), results.end(),
                       [](const json& a, const json& b) { return a["score"] > b["score"]; });
 
-            int k = 20;
+            int k = 50;
             if (results.size() > static_cast<size_t>(k)) {
                 results.resize(k);
             }
@@ -5638,11 +5638,44 @@ objectiveTraces.push_back(mainTrace);
         std::sort(globalResults.begin(), globalResults.end(),
                   [](const json& a, const json& b) { return a["score"] > b["score"]; });
 
-        int k = 20;
-        if (globalResults.size() > static_cast<size_t>(k)) {
-            globalResults.resize(k);
+
+        // ---- Collect ALL chunks with scores ----
+        std::vector<json> allChunks;
+
+        for (const auto& path : globalResults) {
+            for (const auto& chunk : path["pathObj"]["chunks"]) {
+                json chunkObj = chunk;
+
+                // Attach path score to chunk (or use chunk["score"] if exists)
+                chunkObj["score"] = path["score"];
+
+                allChunks.push_back(chunkObj);
+            }
         }
 
+        // ---- Sort chunks globally by score ----
+        std::sort(allChunks.begin(), allChunks.end(),
+                  [](const json& a, const json& b) {
+                      return a["score"] > b["score"];
+                  });
+
+        // ---- Keep only top 20 chunks ----
+        int k = 20;
+        if (allChunks.size() > static_cast<size_t>(k)) {
+            allChunks.resize(k);
+        }
+        string data = "";
+        set<string> visitedChunks;
+
+        for (const auto& chunk : allChunks) {
+            std::string id = chunk["id"].get<string>();
+
+            if (visitedChunks.find(id) == visitedChunks.end()) {
+                data += chunk["name"].get<string>();
+                data += "\n";
+                visitedChunks.insert(id);
+            }
+        }
         instance_logger.info("[GraphRAG] Global Top-" + std::to_string(globalResults.size()) + " results selected");
 
         // ---- LLM call ----
@@ -5650,23 +5683,23 @@ objectiveTraces.push_back(mainTrace);
         retrievedData["results"] = globalResults;
         retrievedData["k"] = globalResults.size();
 
-        string data = "";
-
-        set<string> visitedChunks;
-        for ( auto path : globalResults) {
-            instance_logger.debug(path.dump());
-            for (auto chunk : path["pathObj"]["chunks"]) {
-                instance_logger.debug(chunk.dump());
-
-                if (visitedChunks.find(chunk["id"].get<string>())== visitedChunks.end()) {
-                    instance_logger.debug(data);
-                    data+=chunk["name"].get<string>();
-                    data += "\n";
-                    visitedChunks.insert(chunk["id"].get<string>());
-                }
-
-            }
-        }
+        // string data = "";
+        //
+        // set<string> visitedChunks;
+        // for ( auto path : globalResults) {
+        //     instance_logger.debug(path.dump());
+        //     for (auto chunk : path["pathObj"]["chunks"]) {
+        //         instance_logger.debug(chunk.dump());
+        //
+        //         if (visitedChunks.find(chunk["id"].get<string>())== visitedChunks.end()) {
+        //             instance_logger.debug(data);
+        //             data+=chunk["name"].get<string>();
+        //             data += "\n";
+        //             visitedChunks.insert(chunk["id"].get<string>());
+        //         }
+        //
+        //     }
+        // }
 
 
         std::string finalAnswer = AgentProtocol::getResponse(agentRequestCtx, data);

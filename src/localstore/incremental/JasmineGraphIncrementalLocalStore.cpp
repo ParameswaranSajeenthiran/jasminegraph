@@ -56,8 +56,22 @@ JasmineGraphIncrementalLocalStore::JasmineGraphIncrementalLocalStore(
      FaissIndex::getInstance(std::stoi(Utils::getJasmineGraphProperty(
                                  "org.jasminegraph.vectorstore.dimension")),
                              this->nm->getDbPrefix() + "_faiss_edge.index");
+      std::string endpointsStr =
+          Utils::getJasmineGraphProperty(
+              "org.jasminegraph.vectorstore.embedding.ollama.endpoints");
+
+      std::vector<std::string> endpoints;
+      std::stringstream ss(endpointsStr);
+      std::string item;
+
+      while (std::getline(ss, item, ',')) {
+          if (!item.empty()) {
+              endpoints.push_back(item);
+          }
+      }
+      std::string endpoint = endpoints[partitionID % endpoints.size()];
     this->textEmbedder = new TextEmbedder(
-        Utils::getJasmineGraphProperty("org.jasminegraph.vectorstore.embedding.ollama.endpoint"),  // Ollama endpoint
+       endpoint,  // Ollama endpoint
         Utils::getJasmineGraphProperty(
             "org.jasminegraph.vectorstore.embedding.model"));
   }
@@ -488,8 +502,7 @@ incremental_localstore_logger.debug("Adding source properties: " + sourceJson.du
           strcpy(label, it.value().get<std::string>().c_str());
           relationBlock->getSource()->addLabel(&label[0]);
          }
-          if (  it.key() == "label" || it.key() == "name" || it.key() == "when" || it.key() == "where"  || it.key() ==
-             "type" ) {
+          if (  it.key() == "name" || it.key() == "when" || it.key() == "where"  ) {
               textForEmbedding << value << "\n";
              }
 
@@ -533,8 +546,7 @@ void JasmineGraphIncrementalLocalStore::addDestinationProperties(
           strcpy(label, it.value().get<std::string>().c_str());
           relationBlock->getDestination()->addLabel(&label[0]);
         }
-          if (it.key() == "label" || it.key() == "name" || it.key() == "when" || it.key() == "where"  || it.key() ==
-              "type" ) {
+          if ( it.key() == "name" || it.key() == "when" || it.key() == "where" ) {
               textForEmbedding << value << "\n";
           }
               relationBlock->getDestination()->addProperty(std::string(it.key()),

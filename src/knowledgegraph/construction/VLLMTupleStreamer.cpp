@@ -122,7 +122,7 @@ size_t VLLMTupleStreamer::StreamCallback(char* ptr, size_t size, size_t nmemb,
 
 
                                         std::string subject_id =
-                                            Utils::canonicalize(subject);
+                                        Utils::canonicalize(subject);
                                         std::string object_id =
                                             Utils::canonicalize(object);
                                         std::string edge_id = Utils::canonicalize(
@@ -133,14 +133,14 @@ size_t VLLMTupleStreamer::StreamCallback(char* ptr, size_t size, size_t nmemb,
                                              {{"id", subject_id},
                                               {"properties",
                                                {{"id", subject_id},
-                                                {"label", subject_type},
+                                                {"label", "entity"},
                                                 {"name", subject},
                                                {"chunk_id", ctx->chunkKey}}}}},
                                             {"destination",
                                              {{"id", object_id},
                                               {"properties",
                                                {{"id", object_id},
-                                                {"label", object_type},
+                                                {"label", "entity"},
                                                 {"name", object},
                                                {"chunk_id", ctx->chunkKey}}}}},
                                             {"properties",

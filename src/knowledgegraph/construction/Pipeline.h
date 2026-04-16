@@ -26,7 +26,10 @@ struct Chunk {
     std::string text;
     int64_t chunk_size;
 };
-
+struct ChunkTracker {
+    int totalTuples;
+    std::atomic<int> processedTuples;
+};
 struct Node {
     long id;
     int partition;
@@ -135,11 +138,12 @@ class Pipeline {
 
     std::atomic<bool> metaThreadRunning{true};
     // std::atomic<bool> stopFlag{false};
-
+        std::unordered_map<long, long> chunkSizeMap;
     // std::atomic<long> realtime_bytes_read_so_far{0};
     std::atomic<long> vertexCount{0};
     std::atomic<long> edgeCount{0};
     string workersPartitionMapping;
+        std::unordered_map<long, ChunkTracker> chunkTrackers;
 };
 
 #endif  // JASMINEGRAPH_HDFSPIPELINE_H

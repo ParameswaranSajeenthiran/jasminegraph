@@ -88,7 +88,7 @@ static void cypher_ast_command(int connFd, vector<DataPublisher *> &workerClient
 
 static void semantic_beam_search_command(int connFd, std::string command,
                                          int numberOfPartitions, bool *loop_exit_p , JobScheduler *jobScheduler);
-static void get_properties_command(int connFd, bool *loop_exit_p);
+static void get_properties_command(int connFd, bool *loop_exit_p, SQLiteDBInterface  *sqlite);
 static void send_uploaded_bytes(int connFd, SQLiteDBInterface  *sqlite, bool  *loop_exit, std::string command);
 static vector<DataPublisher *> getWorkerClients(SQLiteDBInterface *sqlite) {
     const vector<Utils::worker> &workerList = Utils::getWorkerList(sqlite);
@@ -178,7 +178,7 @@ void *uifrontendservicesesion(void *dummyPt) {
             workerClientsInitialized = true;
             semantic_beam_search_command(connFd, line,  numberOfPartitions, &loop_exit, jobScheduler);
         } else if (line.compare(PROPERTIES) == 0) {
-            get_properties_command(connFd,  &loop_exit);
+            get_properties_command(connFd,  &loop_exit, sqlite);
         } else if (line.compare(CONSTRUCT_KG) == 0) {
             JasmineGraphFrontEnd::constructKGStreamHDFSCommand(masterIP, connFd, numberOfPartitions,
                 sqlite, &loop_exit);
@@ -1204,7 +1204,7 @@ static void semantic_beam_search_command(int connFd, std::string command, int nu
     ui_frontend_logger.info("Semantic beam search completed successfully for graph " + graph_id);
 }
 
-static void get_properties_command(int connFd, bool *loop_exit_p) {
+static void get_properties_command(int connFd, bool *loop_exit_p, SQLiteDBInterface  *sqlite ) {
     std::string partitionCount = Utils::getJasmineGraphProperty("org.jasminegraph.server.npartitions");
     int numberOfPartitions = std::stoi(partitionCount);
 
@@ -1217,6 +1217,16 @@ static void get_properties_command(int connFd, bool *loop_exit_p) {
     properties["partitionCount"] = numberOfPartitions;
     properties["workersCount"] = numberOfWorkers;
     properties["version"] = version;
+    properties["workers"] = json::array();
+    const vector<Utils::worker> &workerList = Utils::getWorkerList(sqlite);
+
+    for (const Utils::worker &worker : workerList) {
+        json workerJson;
+        workerJson["host"] = worker.hostname;
+        workerJson["port"] = worker.port;
+        workerJson["dataPort"] = worker.dataPort;
+        properties["workers"].push_back(workerJson);
+    }
 
     // Convert JSON object to string
     string result = properties.dump();
