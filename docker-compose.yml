@@ -1,7 +1,8 @@
 services:
   jasminegraph:
-    image: jasminegraph:latest
+    image: abi/jasminegraph
     ports:
+      - '7776:7776'
       - '7777:7777'
       - '7778:7778'
     volumes:
